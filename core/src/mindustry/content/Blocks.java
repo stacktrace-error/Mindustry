@@ -4538,7 +4538,7 @@ public class Blocks{
         }};
 
         scathe = new ItemTurret("scathe"){{
-            requirements(Category.turret, with(Items.silicon, 450, Items.graphite, 400, Items.tungsten, 500, Items.carbide, 300));
+            requirements(Category.turret, with(Items.silicon, 450, Items.graphite, 400, Items.tungsten, 500, Items.oxide, 100, Items.carbide, 200));
 
             ammo(
             Items.carbide, new BasicBulletType(0f, 1){{
@@ -4681,7 +4681,7 @@ public class Blocks{
             targetUnderBlocks = false;
 
             shake = 6f;
-            ammoPerShot = 20;
+            ammoPerShot = 15;
             maxAmmo = 30;
             shootY = -1;
             outlineColor = Pal.darkOutline;
