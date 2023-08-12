@@ -1,7 +1,9 @@
 package mindustry.world.blocks.payloads;
 
+import arc.graphics.Color;
 import arc.graphics.g2d.*;
 import arc.math.*;
+import arc.scene.style.TextureRegionDrawable;
 import arc.util.*;
 import arc.util.io.*;
 import mindustry.ctype.*;
@@ -15,6 +17,8 @@ import static mindustry.Vars.*;
 
 public class BuildPayload implements Payload{
     public Building build;
+    public float overlayTime = 0f;
+    public @Nullable TextureRegion overlayRegion;
 
     public BuildPayload(Block block, Team team){
         this.build = block.newBuilding().create(block, team);
@@ -23,6 +27,18 @@ public class BuildPayload implements Payload{
 
     public BuildPayload(Building build){
         this.build = build;
+    }
+
+    /** Flashes a red overlay region. */
+    public void showOverlay(TextureRegion icon){
+        overlayRegion = icon;
+        overlayTime = 1f;
+    }
+
+    /** Flashes a red overlay region. */
+    public void showOverlay(TextureRegionDrawable icon){
+        if(icon == null || headless) return;
+        showOverlay(icon.getRegion());
     }
 
     public Block block(){
@@ -106,6 +122,20 @@ public class BuildPayload implements Payload{
         build.payloadDraw();
         Draw.zTransform();
         Draw.z(prevZ);
+
+        //draw warning
+        if(overlayTime > 0){
+            var region = overlayRegion == null ? Icon.warning.getRegion() : overlayRegion;
+            Draw.color(Color.scarlet);
+            Draw.alpha(0.8f * Interp.exp5Out.apply(overlayTime));
+
+            float size = 8f;
+            Draw.rect(region, build.x, build.y, size, size);
+
+            Draw.reset();
+
+            overlayTime = Math.max(overlayTime - Time.delta/overlayDuration, 0f);
+        }
     }
 
     @Override

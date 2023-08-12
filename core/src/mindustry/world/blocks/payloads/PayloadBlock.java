@@ -6,8 +6,11 @@ import arc.math.*;
 import arc.math.geom.*;
 import arc.util.*;
 import arc.util.io.*;
+import mindustry.ctype.UnlockableContent;
+import mindustry.game.EventType;
 import mindustry.gen.*;
 import mindustry.graphics.*;
+import mindustry.type.UnitType;
 import mindustry.world.*;
 import mindustry.world.meta.*;
 
@@ -83,6 +86,21 @@ public class PayloadBlock extends Block{
         public Vec2 payVector = new Vec2();
         public float payRotation;
         public boolean carried;
+
+        public Payload createPayload(UnlockableContent content){
+            if(content instanceof UnitType e){
+                Unit payUnit = e.create(team);
+                if(getCommandPosition() != null && payUnit.isCommandable()){
+                    payUnit.command().commandPosition(getCommandPosition());
+                }
+                var unit = new UnitPayload(payUnit);
+                Events.fire(new EventType.UnitCreateEvent(unit.unit, this));
+
+                return unit;
+            }else{
+                return new BuildPayload((Block) content, team);
+            }
+        }
 
         public boolean acceptUnitPayload(Unit unit){
             return false;

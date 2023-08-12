@@ -179,6 +179,18 @@ public class UnitAssembler extends PayloadBlock{
         });
     }
 
+    @Remote(called = Loc.server)
+    public static void assemblerUnitSpawned(Tile tile){
+        if(tile == null || !(tile.build instanceof UnitAssemblerBuild build)) return;
+        build.spawned();
+    }
+
+    @Remote(called = Loc.server)
+    public static void assemblerDroneSpawned(Tile tile, int id){
+        if(tile == null || !(tile.build instanceof UnitAssemblerBuild build)) return;
+        build.droneSpawned(id);
+    }
+
     public static class AssemblerUnitPlan{
         public UnitType unit;
         public Seq<PayloadStack> requirements;
@@ -202,18 +214,6 @@ public class UnitAssembler extends PayloadBlock{
             this.target = target;
             this.item = item;
         }
-    }
-
-    @Remote(called = Loc.server)
-    public static void assemblerUnitSpawned(Tile tile){
-        if(tile == null || !(tile.build instanceof UnitAssemblerBuild build)) return;
-        build.spawned();
-    }
-
-    @Remote(called = Loc.server)
-    public static void assemblerDroneSpawned(Tile tile, int id){
-        if(tile == null || !(tile.build instanceof UnitAssemblerBuild build)) return;
-        build.droneSpawned(id);
     }
 
     public class UnitAssemblerBuild extends PayloadBlockBuild<Payload>{

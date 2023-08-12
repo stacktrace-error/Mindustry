@@ -19,8 +19,6 @@ import mindustry.type.*;
 import static mindustry.Vars.*;
 
 public class UnitPayload implements Payload{
-    public static final float overlayDuration = 40f;
-
     public Unit unit;
     public float overlayTime = 0f;
     public @Nullable TextureRegion overlayRegion;

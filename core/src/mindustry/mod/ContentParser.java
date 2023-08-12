@@ -502,7 +502,7 @@ public class ContentParser{
 
                     if(req.block instanceof Reconstructor r){
                         if(req.previous != null){
-                            r.upgrades.add(new UnitType[]{req.previous, unit});
+                            r.upgrades.add(new UnlockableContent[]{req.previous, unit});
                         }
                     }else if(req.block instanceof UnitFactory f){
                         f.plans.add(new UnitPlan(unit, req.time, req.requirements));

@@ -2,6 +2,7 @@ package mindustry.world.blocks.payloads;
 
 import arc.graphics.g2d.*;
 import arc.math.geom.*;
+import arc.scene.style.TextureRegionDrawable;
 import arc.util.*;
 import arc.util.io.*;
 import mindustry.ctype.*;
@@ -14,6 +15,7 @@ import static mindustry.Vars.*;
 
 public interface Payload extends Position{
     int payloadUnit = 0, payloadBlock = 1;
+    float overlayDuration = 40f;
 
     /** sets this payload's position on the map. */
     void set(float x, float y, float rotation);
@@ -62,6 +64,12 @@ public interface Payload extends Position{
 
     /** @return content describing this payload (block or unit) */
     UnlockableContent content();
+
+    /** Flashes a red overlay region. */
+    default void showOverlay(TextureRegionDrawable icon){};
+
+    /** Flashes a red overlay region. */
+    default void showOverlay(TextureRegion icon){};
 
     @Override
     default float getX(){

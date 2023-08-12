@@ -14,6 +14,7 @@ import arc.util.io.*;
 import mindustry.*;
 import mindustry.ai.*;
 import mindustry.content.*;
+import mindustry.ctype.UnlockableContent;
 import mindustry.entities.*;
 import mindustry.entities.units.*;
 import mindustry.game.EventType.*;
@@ -23,6 +24,7 @@ import mindustry.io.*;
 import mindustry.logic.*;
 import mindustry.type.*;
 import mindustry.ui.*;
+import mindustry.world.Block;
 import mindustry.world.blocks.payloads.*;
 import mindustry.world.consumers.*;
 import mindustry.world.meta.*;
@@ -31,7 +33,7 @@ import static mindustry.Vars.*;
 
 public class Reconstructor extends UnitBlock{
     public float constructTime = 60 * 2;
-    public Seq<UnitType[]> upgrades = new Seq<>();
+    public Seq<UnlockableContent[]> upgrades = new Seq<>();
     public int[] capacities = {};
 
     public Reconstructor(String name){
@@ -43,6 +45,11 @@ public class Reconstructor extends UnitBlock{
         configurable = true;
         config(UnitCommand.class, (ReconstructorBuild build, UnitCommand command) -> build.command = command);
         configClear((ReconstructorBuild build) -> build.command = null);
+        group = BlockGroup.units;
+        outputsPayload = true;
+        rotate = true;
+        update = true;
+        solid = true;
     }
 
     @Override
@@ -134,11 +141,12 @@ public class Reconstructor extends UnitBlock{
         super.init();
     }
 
-    public void addUpgrade(UnitType from, UnitType to){
-        upgrades.add(new UnitType[]{from, to});
+    public void addUpgrade(UnlockableContent from, UnlockableContent to){
+        upgrades.add(new UnlockableContent[]{from, to});
     }
 
-    public class ReconstructorBuild extends UnitBuild{
+    public class ReconstructorBuild extends PayloadBlockBuild<Payload>{
+        public float progress, time, speedScl;
         public @Nullable Vec2 commandPos;
         public @Nullable UnitCommand command;
 
@@ -163,7 +171,7 @@ public class Reconstructor extends UnitBlock{
 
         @Override
         public boolean acceptUnitPayload(Unit unit){
-            return hasUpgrade(unit.type) && !upgrade(unit.type).isBanned();
+            return hasUpgrade(unit.type) && !banned(upgrade(unit.type));
         }
 
         public boolean canSetCommand(){
@@ -215,26 +223,25 @@ public class Reconstructor extends UnitBlock{
         public boolean acceptPayload(Building source, Payload payload){
             if(!(this.payload == null
             && (this.enabled || source == this)
-            && relativeTo(source) != rotation
-            && payload instanceof UnitPayload pay)){
+            && relativeTo(source) != rotation)){
                 return false;
             }
 
-            var upgrade = upgrade(pay.unit.type);
+            var upgrade = upgrade(payload.content());
 
             if(upgrade != null){
                 if(!upgrade.unlockedNowHost() && !team.isAI()){
                     //flash "not researched"
-                    pay.showOverlay(Icon.tree);
+                    payload.showOverlay(Icon.tree);
                 }
 
-                if(upgrade.isBanned()){
+                if(banned(upgrade)){
                     //flash an X, meaning 'banned'
-                    pay.showOverlay(Icon.cancel);
+                    payload.showOverlay(Icon.cancel);
                 }
             }
 
-            return upgrade != null && (team.isAI() || upgrade.unlockedNowHost()) && !upgrade.isBanned();
+            return upgrade != null && (team.isAI() || upgrade.unlockedNowHost()) && !banned(upgrade);
         }
 
         @Override
@@ -268,9 +275,9 @@ public class Reconstructor extends UnitBlock{
             if(constructing() && hasArrived()){
                 Draw.draw(Layer.blockOver, () -> {
                     Draw.alpha(1f - progress/ constructTime);
-                    Draw.rect(payload.unit.type.fullIcon, x, y, payload.rotation() - 90);
+                    Draw.rect(payload.content().fullIcon, x, y, payload instanceof UnitPayload ? payload.rotation() - 90 : 0f);
                     Draw.reset();
-                    Drawf.construct(this, upgrade(payload.unit.type), payload.rotation() - 90f, progress / constructTime, speedScl, time);
+                    Drawf.construct(this, upgrade(payload.content()), payload instanceof UnitPayload ? payload.rotation() - 90 : 0f, progress / constructTime, speedScl, time);
                 });
             }else{
                 Draw.z(Layer.blockOver);
@@ -289,12 +296,12 @@ public class Reconstructor extends UnitBlock{
         }
 
         @Override
-        public void updateTile(){
+        public void updateTile(){ //todo needs unit()
             boolean valid = false;
 
             if(payload != null){
                 //check if offloading
-                if(!hasUpgrade(payload.unit.type)){
+                if(!hasUpgrade(payload.content())){
                     moveOutPayload();
                 }else{ //update progress
                     if(moveInPayload()){
@@ -305,23 +312,24 @@ public class Reconstructor extends UnitBlock{
 
                         //upgrade the unit
                         if(progress >= constructTime){
-                            payload.unit = upgrade(payload.unit.type).create(payload.unit.team());
+                            payload = createPayload(upgrade(payload.content()));
 
-                            if(payload.unit.isCommandable()){
+
+                            if(payload instanceof UnitPayload pay && pay.unit.isCommandable()){
                                 if(commandPos != null){
-                                    payload.unit.command().commandPosition(commandPos);
+                                    pay.unit.command().commandPosition(commandPos);
                                 }
                                 if(command != null){
                                     //this already checks if it is a valid command for the unit type
-                                    payload.unit.command().command(command);
+                                    pay.unit.command().command(command);
                                 }
+                                Events.fire(new UnitCreateEvent(pay.unit, this));
                             }
 
                             progress %= 1f;
                             Effect.shake(2f, 3f, this);
                             Fx.producesmoke.at(this);
                             consume();
-                            Events.fire(new UnitCreateEvent(payload.unit, this));
                         }
                     }
                 }
@@ -329,6 +337,20 @@ public class Reconstructor extends UnitBlock{
 
             speedScl = Mathf.lerpDelta(speedScl, Mathf.num(valid), 0.05f);
             time += edelta() * speedScl * state.rules.unitBuildSpeed(team);
+        }
+
+        @Override
+        public void dumpPayload(){
+            //translate payload forward slightly
+            float tx = Angles.trnsx(payload.rotation(), 0.1f), ty = Angles.trnsy(payload.rotation(), 0.1f);
+            payload.set(payload.x() + tx, payload.y() + ty, payload.rotation());
+
+            if(payload.dump() && payload instanceof UnitPayload){
+                payload = null;
+                Call.unitBlockSpawn(tile);
+            }else{
+                payload.set(payload.x() - tx, payload.y() - ty, payload.rotation());
+            }
         }
 
         @Override
@@ -348,23 +370,31 @@ public class Reconstructor extends UnitBlock{
         }
 
         public UnitType unit(){
+            return payload == null || !(upgrade(payload.content()) instanceof UnitType) ? null : (UnitType)upgrade(payload.content());
+        }
+
+        public boolean banned(UnlockableContent content){
+            return content instanceof UnitType u ? u.isBanned() : state.rules.isBanned((Block)content);
+        }
+
+        public UnlockableContent content(){
             if(payload == null) return null;
 
-            UnitType t = upgrade(payload.unit.type);
+            UnlockableContent t = upgrade(payload.content());
             return t != null && (t.unlockedNowHost() || team.isAI()) ? t : null;
         }
 
         public boolean constructing(){
-            return payload != null && hasUpgrade(payload.unit.type);
+            return payload != null && hasUpgrade(payload.content());
         }
 
-        public boolean hasUpgrade(UnitType type){
-            UnitType t = upgrade(type);
-            return t != null && (t.unlockedNowHost() || team.isAI()) && !type.isBanned();
+        public boolean hasUpgrade(UnlockableContent type){
+            UnlockableContent t = upgrade(type);
+            return t != null && (t.unlockedNowHost() || team.isAI()) && !banned(type);
         }
 
-        public UnitType upgrade(UnitType type){
-            UnitType[] r =  upgrades.find(u -> u[0] == type);
+        public UnlockableContent upgrade(UnlockableContent type){
+            UnlockableContent[] r =  upgrades.find(u -> u[0] == type);
             return r == null ? null : r[1];
         }
 

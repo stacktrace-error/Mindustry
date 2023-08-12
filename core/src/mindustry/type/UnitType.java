@@ -573,7 +573,7 @@ public class UnitType extends UnlockableContent{
         //units require reconstructors being researched
         for(Block block : content.blocks()){
             if(block instanceof Reconstructor r){
-                for(UnitType[] recipe : r.upgrades){
+                for(UnlockableContent[] recipe : r.upgrades){
                     //result of reconstruction is this, so it must be a dependency
                     if(recipe[1] == this){
                         cons.get(block);
@@ -1042,7 +1042,7 @@ public class UnitType extends UnlockableContent{
     }
 
     /** @return item requirements based on reconstructors or factories found; returns previous unit in array if provided */
-    public @Nullable ItemStack[] getRequirements(@Nullable UnitType[] prevReturn, @Nullable float[] timeReturn){
+    public @Nullable ItemStack[] getRequirements(@Nullable UnlockableContent[] prevReturn, @Nullable float[] timeReturn){
         //find reconstructor
         var rec = (Reconstructor)content.blocks().find(b -> b instanceof Reconstructor re && re.upgrades.contains(u -> u[1] == this));
 

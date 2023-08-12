@@ -4,6 +4,7 @@ import arc.graphics.*;
 import arc.math.*;
 import arc.struct.*;
 import mindustry.*;
+import mindustry.ctype.UnlockableContent;
 import mindustry.entities.*;
 import mindustry.entities.abilities.*;
 import mindustry.entities.bullet.*;
@@ -5351,7 +5352,8 @@ public class Blocks{
                 new UnitType[]{UnitTypes.flare, UnitTypes.horizon},
                 new UnitType[]{UnitTypes.mono, UnitTypes.poly},
                 new UnitType[]{UnitTypes.risso, UnitTypes.minke},
-                new UnitType[]{UnitTypes.retusa, UnitTypes.oxynoe}
+                new UnitType[]{UnitTypes.retusa, UnitTypes.oxynoe},
+                new UnlockableContent[]{Blocks.arc, Blocks.lancer}
             );
         }};
 
