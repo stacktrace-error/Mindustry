@@ -39,7 +39,7 @@ abstract class BuilderComp implements Posc, Statusc, Teamc, Rotc{
     transient float buildAlpha = 0f;
 
     public boolean canBuild(){
-        return type.buildSpeed > 0 && buildSpeedMultiplier > 0;
+        return true;
     }
 
     @Override
@@ -240,7 +240,7 @@ abstract class BuilderComp implements Posc, Statusc, Teamc, Rotc{
 
     /** Return whether this builder's place queue contains items. */
     boolean isBuilding(){
-        return plans.size != 0;
+        return type.buildSpeed > 0 && plans.size != 0;
     }
 
     /** Clears the placement queue. */
@@ -282,7 +282,7 @@ abstract class BuilderComp implements Posc, Statusc, Teamc, Rotc{
         //not actively building when not near the build plan
         if(isBuilding()){
             var plan = buildPlan();
-            if(!state.isEditor() && plan != null && !within(plan, state.rules.infiniteResources ? Float.MAX_VALUE : type.buildRange)){
+            if(type.buildSpeed <= 0 && !state.isEditor() && plan != null && !within(plan, state.rules.infiniteResources ? Float.MAX_VALUE : type.buildRange)){
                 return false;
             }
         }

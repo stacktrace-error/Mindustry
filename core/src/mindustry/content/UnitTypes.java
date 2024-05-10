@@ -1326,8 +1326,9 @@ public class UnitTypes{
         }};
 
         mega = new UnitType("mega"){{
-            defaultCommand = UnitCommand.repairCommand;
+            aiController = PayloadCarrierAI::new;
 
+            playerControllable = false;
             mineTier = 3;
             mineSpeed = 4f;
             health = 460;
@@ -2353,7 +2354,7 @@ public class UnitTypes{
             flying = true;
             mineSpeed = 6.5f;
             mineTier = 1;
-            buildSpeed = 0.5f;
+            buildSpeed = 0.0f;
             drag = 0.05f;
             speed = 3f;
             rotateSpeed = 15f;
@@ -2390,7 +2391,7 @@ public class UnitTypes{
             flying = true;
             mineSpeed = 7f;
             mineTier = 1;
-            buildSpeed = 0.75f;
+            buildSpeed = 0.0f;
             drag = 0.05f;
             speed = 3.3f;
             rotateSpeed = 17f;
@@ -2432,7 +2433,7 @@ public class UnitTypes{
             flying = true;
             mineSpeed = 8f;
             mineTier = 2;
-            buildSpeed = 1f;
+            buildSpeed = 0f;
             drag = 0.05f;
             speed = 3.55f;
             rotateSpeed = 19f;
