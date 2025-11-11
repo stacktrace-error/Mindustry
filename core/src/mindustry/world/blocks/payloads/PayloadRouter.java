@@ -1,9 +1,9 @@
 package mindustry.world.blocks.payloads;
 
-import arc.graphics.*;
 import arc.graphics.g2d.*;
 import arc.math.*;
 import arc.scene.ui.layout.*;
+import arc.struct.*;
 import arc.util.*;
 import arc.util.io.*;
 import mindustry.*;
@@ -21,6 +21,8 @@ import mindustry.world.blocks.storage.*;
 import static mindustry.Vars.*;
 
 public class PayloadRouter extends PayloadConveyor{
+    public boolean invert = false;
+
     public @Load("@-over") TextureRegion overRegion;
 
     public PayloadRouter(String name){
@@ -41,6 +43,12 @@ public class PayloadRouter extends PayloadConveyor{
         super.drawPlanRegion(plan, list);
 
         Draw.rect(overRegion, plan.drawx(), plan.drawy());
+    }
+
+    @Override
+    public void getPlanConfigs(Seq<UnlockableContent> options){
+        options.add(content.blocks().select(this::canSort));
+        options.add(content.units().select(this::canSort));
     }
 
     public boolean canSort(Block b){
@@ -130,6 +138,8 @@ public class PayloadRouter extends PayloadConveyor{
             matches = sorted != null &&
                 (item instanceof BuildPayload build && build.block() == sorted) ||
                 (item instanceof UnitPayload unit && unit.unit.type == sorted);
+
+            if(invert) matches = !matches;
         }
 
         @Override
@@ -147,13 +157,7 @@ public class PayloadRouter extends PayloadConveyor{
 
         @Override
         public void drawSelect(){
-            if(sorted != null){
-                float dx = x - size * tilesize/2f, dy = y + size * tilesize/2f, s = iconSmall / 4f;
-                Draw.mixcol(Color.darkGray, 1f);
-                Draw.rect(sorted.fullIcon, dx, dy - 1, s, s);
-                Draw.reset();
-                Draw.rect(sorted.fullIcon, dx, dy, s, s);
-            }
+            drawItemSelection(sorted);
         }
 
         @Override

@@ -4,6 +4,7 @@ import arc.func.*;
 import arc.math.geom.*;
 import arc.math.geom.QuadTree.*;
 import arc.util.*;
+import mindustry.content.*;
 import mindustry.game.*;
 import mindustry.gen.*;
 import mindustry.world.*;
@@ -20,8 +21,6 @@ public class BuildPlan implements Position, QuadTreeObject{
     public boolean breaking;
     /** Config int. Not used unless hasConfig is true.*/
     public Object config;
-    /** Original position, only used in schematics.*/
-    public int originalX, originalY, originalWidth, originalHeight;
 
     /** Last progress.*/
     public float progress;
@@ -37,7 +36,7 @@ public class BuildPlan implements Position, QuadTreeObject{
     public BuildPlan(int x, int y, int rotation, Block block){
         this.x = x;
         this.y = y;
-        this.rotation = rotation;
+        if(block != null) this.rotation = block.planRotation(rotation);
         this.block = block;
         this.breaking = false;
     }
@@ -46,7 +45,7 @@ public class BuildPlan implements Position, QuadTreeObject{
     public BuildPlan(int x, int y, int rotation, Block block, Object config){
         this.x = x;
         this.y = y;
-        this.rotation = rotation;
+        if(block != null) this.rotation = block.planRotation(rotation);
         this.block = block;
         this.breaking = false;
         this.config = config;
@@ -73,6 +72,12 @@ public class BuildPlan implements Position, QuadTreeObject{
         if(breaking) return false;
         Tile tile = tile();
         return tile != null && tile.team() == team && tile.block() == block && tile.build != null && tile.build.rotation != rotation;
+    }
+
+    public boolean isDerelictRepair(){
+        if(breaking || !state.rules.derelictRepair) return false;
+        Tile tile = tile();
+        return tile != null && tile.team() == Team.derelict && tile.block() == block && tile.build != null;
     }
 
     public boolean samePos(BuildPlan other){
@@ -111,20 +116,10 @@ public class BuildPlan implements Position, QuadTreeObject{
         copy.block = block;
         copy.breaking = breaking;
         copy.config = config;
-        copy.originalX = originalX;
-        copy.originalY = originalY;
         copy.progress = progress;
         copy.initialized = initialized;
         copy.animScale = animScale;
         return copy;
-    }
-
-    public BuildPlan original(int x, int y, int originalWidth, int originalHeight){
-        originalX = x;
-        originalY = y;
-        this.originalWidth = originalWidth;
-        this.originalHeight = originalHeight;
-        return this;
     }
 
     public Rect bounds(Rect rect){
@@ -138,7 +133,7 @@ public class BuildPlan implements Position, QuadTreeObject{
     public BuildPlan set(int x, int y, int rotation, Block block){
         this.x = x;
         this.y = y;
-        this.rotation = rotation;
+        if(block != null) this.rotation = block.planRotation(rotation);
         this.block = block;
         this.breaking = false;
         return this;
@@ -150,6 +145,17 @@ public class BuildPlan implements Position, QuadTreeObject{
 
     public float drawy(){
         return y*tilesize + (block == null ? 0 : block.offset);
+    }
+
+    public boolean isDone(){
+        Tile tile = world.tile(x, y);
+        if(tile == null) return true;
+        Block tblock = tile.block();
+        if(breaking){
+            return tblock == Blocks.air || tblock == tile.floor();
+        }else{
+            return tblock == block && (tile.build == null || tile.build.rotation == rotation);
+        }
     }
 
     public @Nullable Tile tile(){

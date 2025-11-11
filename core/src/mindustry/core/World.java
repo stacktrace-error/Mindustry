@@ -44,6 +44,11 @@ public class World{
 
         Events.on(WorldLoadEvent.class, e -> {
             tileChanges = -1;
+
+            //make each building check if it can update in the given map area
+            for(var build : Groups.build){
+                build.checkAllowUpdate();
+            }
         });
     }
 
@@ -123,7 +128,7 @@ public class World{
         Tile tile = tiles.get(x, y);
         if(tile == null) return null;
         if(tile.build != null){
-            return tile.build.tile();
+            return tile.build.tile;
         }
         return tile;
     }
@@ -254,19 +259,19 @@ public class World{
     }
 
     public void loadSector(Sector sector){
-        loadSector(sector, 0, true);
+        loadSector(sector, new WorldParams());
     }
 
-    public void loadSector(Sector sector, int seedOffset, boolean saveInfo){
-        setSectorRules(sector, saveInfo);
+    public void loadSector(Sector sector, WorldParams params){
+        setSectorRules(sector, params.saveInfo);
 
         int size = sector.getSize();
         loadGenerator(size, size, tiles -> {
             if(sector.preset != null){
-                sector.preset.generator.generate(tiles);
+                sector.preset.generator.generate(tiles, params);
                 sector.preset.rules.get(state.rules); //apply extra rules
             }else if(sector.planet.generator != null){
-                sector.planet.generator.generate(tiles, sector, seedOffset);
+                sector.planet.generator.generate(tiles, sector, params);
             }else{
                 throw new RuntimeException("Sector " + sector.id + " on planet " + sector.planet.name + " has no generator or preset defined. Provide a planet generator or preset map.");
             }
@@ -274,7 +279,7 @@ public class World{
             state.rules.sector = sector;
         });
 
-        if(saveInfo && state.rules.waves){
+        if(params.saveInfo && state.rules.waves){
             sector.info.waves = state.rules.waves;
         }
 
@@ -284,7 +289,7 @@ public class World{
         }
 
         //reset rules
-        setSectorRules(sector, saveInfo);
+        setSectorRules(sector, params.saveInfo);
 
         if(state.rules.defaultTeam.core() != null){
             sector.info.spawnPosition = state.rules.defaultTeam.core().pos();
@@ -320,8 +325,7 @@ public class World{
 
         state.rules.cloudColor = sector.planet.landCloudColor;
         state.rules.env = sector.planet.defaultEnv;
-        state.rules.hiddenBuildItems.clear();
-        state.rules.hiddenBuildItems.addAll(sector.planet.hiddenItems);
+        state.rules.planet = sector.planet;
         sector.planet.applyRules(state.rules);
         sector.info.resources = content.toSeq();
         sector.info.resources.sort(Structs.comps(Structs.comparing(Content::getContentType), Structs.comparingInt(c -> c.id)));
@@ -365,8 +369,8 @@ public class World{
 
         if(!headless){
             if(state.teams.cores(checkRules.defaultTeam).size == 0 && !checkRules.pvp){
-                ui.showErrorMessage(Core.bundle.format("map.nospawn", checkRules.defaultTeam.color, checkRules.defaultTeam.localized()));
                 invalidMap = true;
+                ui.showErrorMessage(Core.bundle.format("map.nospawn", checkRules.defaultTeam.coloredName()));
             }else if(checkRules.pvp){ //pvp maps need two cores to be valid
                 if(state.teams.getActive().count(TeamData::hasCore) < 2){
                     invalidMap = true;
@@ -375,7 +379,7 @@ public class World{
             }else if(checkRules.attackMode){ //attack maps need two cores to be valid
                 invalidMap = state.rules.waveTeam.data().noCores();
                 if(invalidMap){
-                    ui.showErrorMessage(Core.bundle.format("map.nospawn.attack", checkRules.waveTeam.color, checkRules.waveTeam.localized()));
+                    ui.showErrorMessage(Core.bundle.format("map.nospawn.attack", checkRules.waveTeam.coloredName()));
                 }
             }
         }else{
@@ -459,11 +463,16 @@ public class World{
         return 0;
     }
 
-    public void checkMapArea(){
-        for(var build : Groups.build){
-            //reset map-area-based disabled blocks.
-            if(!build.enabled && build.block.autoResetEnabled){
-                build.enabled = true;
+    public void checkMapArea(int x, int y, int w, int h){
+        for(var team : state.teams.present){
+            for(var build : team.buildings){
+                //reset map-area-based disabled blocks that were not in the previous map area
+                if(!build.enabled && build.block.autoResetEnabled && !Rect.contains(x, y, w, h, build.tile.x, build.tile.y)){
+                    build.enabled = true;
+                }
+
+                //if the map area contracts, disable the block
+                build.checkAllowUpdate();
             }
         }
     }
@@ -570,9 +579,18 @@ public class World{
         }
     }
 
+    public WorldContext makeSectorContext(Sector sector){
+        return new Context(sector);
+    }
+
     private class Context implements WorldContext{
+        private Sector sector;
 
         Context(){}
+
+        Context(Sector sector){
+            this.sector = sector;
+        }
 
         @Override
         public Tile tile(int index){
@@ -604,6 +622,12 @@ public class World{
         @Override
         public void end(){
             endMapLoad();
+        }
+
+        @Nullable
+        @Override
+        public Sector getSector(){
+            return sector;
         }
     }
 

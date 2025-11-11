@@ -14,6 +14,7 @@ import mindustry.entities.EntityCollisions.*;
 import mindustry.entities.*;
 import mindustry.game.EventType.*;
 import mindustry.gen.*;
+import mindustry.graphics.*;
 import mindustry.type.*;
 
 import static mindustry.Vars.*;
@@ -39,6 +40,11 @@ public class UnitPayload implements Payload{
     public void showOverlay(TextureRegionDrawable icon){
         if(icon == null || headless) return;
         showOverlay(icon.getRegion());
+    }
+
+    @Override
+    public boolean contentEquals(Payload other){
+        return other instanceof UnitPayload up && up.unit.type == unit.type;
     }
 
     @Override
@@ -117,7 +123,7 @@ public class UnitPayload implements Payload{
         }
 
         //cannot dump when there's a lot of overlap going on
-        if(!unit.type.flying && Units.count(unit.x, unit.y, unit.physicSize(), o -> o.isGrounded() && (o.type.allowLegStep == unit.type.allowLegStep)) > 0){
+        if(!unit.type.flying && Units.count(unit.x, unit.y, unit.physicSize() * 1.05f, o -> o.isGrounded() && (o.type.allowLegStep == unit.type.allowLegStep)) > 0){
             return false;
         }
 
@@ -129,6 +135,7 @@ public class UnitPayload implements Payload{
         unit.add();
         unit.unloaded();
         Events.fire(new UnitUnloadEvent(unit));
+        Units.notifyUnitSpawn(unit);
 
         return true;
     }
@@ -146,22 +153,16 @@ public class UnitPayload implements Payload{
         //TODO should not happen
         if(unit.type == null) return;
 
-        //TODO this would be more accurate but has all sorts of associated problems (?)
-        if(false){
-            float e = unit.elevation;
-            unit.elevation = 0f;
-            //avoids drawing mining or building
-            unit.type.draw(unit);
-            unit.elevation = e;
-            return;
-        }
-
-        unit.type.drawSoftShadow(unit);
-        Draw.rect(unit.type.fullIcon, unit.x, unit.y, unit.rotation - 90);
-        unit.type.drawCell(unit);
+        float e = unit.elevation;
+        unit.elevation = 0f;
+        Draw.scl(1f, 1f);
+        unit.type.draw(unit);
+        unit.elevation = e;
 
         //draw warning
         if(overlayTime > 0){
+            float z = Draw.z();
+            Draw.z(Layer.groundUnit + 1f);
             var region = overlayRegion == null ? Icon.warning.getRegion() : overlayRegion;
             Draw.color(Color.scarlet);
             Draw.alpha(0.8f * Interp.exp5Out.apply(overlayTime));
@@ -172,6 +173,7 @@ public class UnitPayload implements Payload{
             Draw.reset();
 
             overlayTime = Math.max(overlayTime - Time.delta/overlayDuration, 0f);
+            Draw.z(z);
         }
     }
 

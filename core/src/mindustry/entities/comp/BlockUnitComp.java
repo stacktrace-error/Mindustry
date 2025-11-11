@@ -40,7 +40,7 @@ abstract class BlockUnitComp implements Unitc{
     @Replace
     @Override
     public TextureRegion icon(){
-        return tile.block.fullIcon;
+        return tile.block.uiIcon;
     }
 
     @Override
@@ -60,6 +60,11 @@ abstract class BlockUnitComp implements Unitc{
 
     @Replace
     public boolean isValid(){
+        return tile != null && tile.isValid();
+    }
+
+    @Replace
+    public boolean isAdded(){
         return tile != null && tile.isValid();
     }
 

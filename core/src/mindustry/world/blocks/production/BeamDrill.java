@@ -45,6 +45,10 @@ public class BeamDrill extends Block{
 
     /** Multipliers of drill speed for each item. Defaults to 1. */
     public ObjectFloatMap<Item> drillMultipliers = new ObjectFloatMap<>();
+    /** Special exemption item that this drill can't mine. */
+    public @Nullable Item blockedItem;
+    /** Special exemption items that this drill can't mine. */
+    public @Nullable Seq<Item> blockedItems;
 
     public Color sparkColor = Color.valueOf("fd9e81"), glowColor = Color.white;
     public float glowIntensity = 0.2f, pulseIntensity = 0.07f;
@@ -65,6 +69,7 @@ public class BeamDrill extends Block{
         solid = true;
         drawArrow = false;
         regionRotated1 = 1;
+        ignoreLineRotation = true;
         ambientSoundVolume = 0.05f;
         ambientSound = Sounds.minebeam;
 
@@ -76,6 +81,9 @@ public class BeamDrill extends Block{
     public void init(){
         updateClipRadius((range + 2) * tilesize);
         super.init();
+        if(blockedItems == null && blockedItem != null){
+            blockedItems = Seq.with(blockedItem);
+        }
     }
 
     @Override
@@ -111,7 +119,10 @@ public class BeamDrill extends Block{
     public void setStats(){
         super.setStats();
 
-        stats.add(Stat.drillTier, StatValues.drillables(drillTime, 0f, size, drillMultipliers, b -> (b instanceof Floor f && f.wallOre && f.itemDrop != null && f.itemDrop.hardness <= tier) || (b instanceof StaticWall w && w.itemDrop != null && w.itemDrop.hardness <= tier)));
+        stats.add(Stat.drillTier, StatValues.drillables(drillTime, 0f, size, drillMultipliers, b ->
+            (b instanceof Floor f && f.wallOre && f.itemDrop != null && f.itemDrop.hardness <= tier && (blockedItems == null || !blockedItems.contains(f.itemDrop))) ||
+            (b instanceof StaticWall w && w.itemDrop != null && w.itemDrop.hardness <= tier && (blockedItems == null || !blockedItems.contains(w.itemDrop)))
+        ));
 
         stats.add(Stat.drillSpeed, 60f / drillTime * size, StatUnit.itemsSecond);
 
@@ -142,7 +153,7 @@ public class BeamDrill extends Block{
                 if(other != null && other.solid()){
                     Item drop = other.wallDrop();
                     if(drop != null){
-                        if(drop.hardness <= tier){
+                        if(drop.hardness <= tier && (blockedItems == null || !blockedItems.contains(drop))){
                             found = drop;
                             count++;
                         }else{
@@ -193,7 +204,7 @@ public class BeamDrill extends Block{
                 Tile other = world.tile(Tmp.p1.x + Geometry.d4x(rotation)*j, Tmp.p1.y + Geometry.d4y(rotation)*j);
                 if(other != null && other.solid()){
                     Item drop = other.wallDrop();
-                    if(drop != null && drop.hardness <= tier){
+                    if(drop != null && drop.hardness <= tier && (blockedItems == null || !blockedItems.contains(drop))){
                         return true;
                     }
                     break;
@@ -221,13 +232,7 @@ public class BeamDrill extends Block{
         @Override
         public void drawSelect(){
 
-            if(lastItem != null){
-                float dx = x - size * tilesize/2f, dy = y + size * tilesize/2f, s = iconSmall / 4f;
-                Draw.mixcol(Color.darkGray, 1f);
-                Draw.rect(lastItem.fullIcon, dx, dy - 1, s, s);
-                Draw.reset();
-                Draw.rect(lastItem.fullIcon, dx, dy, s, s);
-            }
+            drawItemSelection(lastItem);
         }
 
         @Override
@@ -237,7 +242,7 @@ public class BeamDrill extends Block{
             if(lasers[0] == null) updateLasers();
 
             warmup = Mathf.approachDelta(warmup, Mathf.num(efficiency > 0), 1f / 60f);
-            
+
             updateFacing();
 
             float multiplier = Mathf.lerp(1f, optionalBoostIntensity, optionalEfficiency);
@@ -258,14 +263,14 @@ public class BeamDrill extends Block{
                 time %= drillTime;
             }
 
-            if(timer(timerDump, dumpTime)){
+            if(timer(timerDump, dumpTime / timeScale)){
                 dump();
             }
         }
 
         @Override
         public boolean shouldConsume(){
-            return items.total() < itemCapacity && lastItem != null && enabled;
+            return items.total() < itemCapacity && facingAmount > 0 && enabled;
         }
 
         @Override
@@ -281,6 +286,9 @@ public class BeamDrill extends Block{
             for(int i = 0; i < size; i++){
                 Tile face = facing[i];
                 if(face != null){
+                    Item drop = face.wallDrop();
+
+                    if(drop == null) continue;
                     Point2 p = lasers[i];
                     float lx = face.worldx() - (dir.x/2f)*tilesize, ly = face.worldy() - (dir.y/2f)*tilesize;
 
@@ -321,7 +329,7 @@ public class BeamDrill extends Block{
                     Draw.z(Layer.effect);
                     Lines.stroke(warmup);
                     rand.setState(i, id);
-                    Color col = face.wallDrop().color;
+                    Color col = drop.color;
                     Color spark = Tmp.c3.set(sparkColor).lerp(boostHeatColor, boostWarmup);
                     for(int j = 0; j < sparks; j++){
                         float fin = (Time.time / sparkLife + rand.random(sparkRecurrence + 1f)) % sparkRecurrence;
@@ -379,7 +387,7 @@ public class BeamDrill extends Block{
                     if(other != null){
                         if(other.solid()){
                             Item drop = other.wallDrop();
-                            if(drop != null && drop.hardness <= tier){
+                            if(drop != null && drop.hardness <= tier && (blockedItems == null || !blockedItems.contains(drop))){
                                 facingAmount ++;
                                 if(lastItem != drop && lastItem != null){
                                     multiple = true;

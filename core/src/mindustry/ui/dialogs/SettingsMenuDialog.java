@@ -180,6 +180,8 @@ public class SettingsMenuDialog extends BaseDialog{
             t.button("@data.import", Icon.download, style, () -> ui.showConfirm("@confirm", "@data.import.confirm", () -> platform.showFileChooser(true, "zip", file -> {
                 try{
                     importData(file);
+                    control.saves.resetSave();
+                    state = new GameState();
                     Core.app.exit();
                 }catch(IllegalArgumentException e){
                     ui.showErrorMessage("@data.invalid");
@@ -295,6 +297,7 @@ public class SettingsMenuDialog extends BaseDialog{
     }
 
     void addSettings(){
+        sound.checkPref("alwaysmusic", false);
         sound.sliderPref("musicvol", 100, 0, 100, 1, i -> i + "%");
         sound.sliderPref("sfxvol", 100, 0, 100, 1, i -> i + "%");
         sound.sliderPref("ambientvol", 100, 0, 100, 1, i -> i + "%");
@@ -303,18 +306,15 @@ public class SettingsMenuDialog extends BaseDialog{
 
         if(mobile){
             game.checkPref("autotarget", true);
-            if(!ios){
-                game.checkPref("keyboard", false, val -> {
-                    control.setInput(val ? new DesktopInput() : new MobileInput());
-                    input.setUseKeyboard(val);
-                });
-                if(Core.settings.getBool("keyboard")){
-                    control.setInput(new DesktopInput());
-                    input.setUseKeyboard(true);
-                }
-            }else{
-                Core.settings.put("keyboard", false);
+            game.checkPref("keyboard", false, val -> {
+                control.setInput(val ? new DesktopInput() : new MobileInput());
+                input.setUseKeyboard(val);
+            });
+            if(Core.settings.getBool("keyboard")){
+                control.setInput(new DesktopInput());
+                input.setUseKeyboard(true);
             }
+
         }
         //the issue with touchscreen support on desktop is that:
         //1) I can't test it
@@ -330,6 +330,13 @@ public class SettingsMenuDialog extends BaseDialog{
             game.checkPref("crashreport", true);
         }
 
+        game.checkPref("communityservers", true, val -> {
+            defaultServers.clear();
+            if(val){
+                JoinDialog.fetchServers();
+            }
+        });
+
         game.checkPref("savecreate", true);
         game.checkPref("blockreplace", true);
         game.checkPref("conveyorpathfinding", true);
@@ -339,6 +346,7 @@ public class SettingsMenuDialog extends BaseDialog{
         if(!mobile){
             game.checkPref("backgroundpause", true);
             game.checkPref("buildautopause", false);
+            game.checkPref("distinctcontrolgroups", true);
         }
 
         game.checkPref("doubletapmine", false);
@@ -378,7 +386,18 @@ public class SettingsMenuDialog extends BaseDialog{
         graphics.sliderPref("bloomintensity", 6, 0, 16, i -> (int)(i/4f * 100f) + "%");
         graphics.sliderPref("bloomblur", 2, 1, 16, i -> i + "x");
 
-        graphics.sliderPref("fpscap", 240, 10, 245, 5, s -> (s > 240 ? Core.bundle.get("setting.fpscap.none") : Core.bundle.format("setting.fpscap.text", s)));
+        graphics.sliderPref("fpscap", 240, 10, 245, 5, s -> {
+            if(ios){
+                Core.graphics.setPreferredFPS(s > 240 ? 0 : s);
+            }
+            return (s > 240 ? Core.bundle.get("setting.fpscap.none") : Core.bundle.format("setting.fpscap.text", s));
+        });
+
+        if(ios){
+            int value = Core.settings.getInt("fpscap", 240);
+            Core.graphics.setPreferredFPS(value > 240 ? 0 : value);
+        }
+
         graphics.sliderPref("chatopacity", 100, 0, 100, 5, s -> s + "%");
         graphics.sliderPref("lasersopacity", 100, 0, 100, 5, s -> {
             if(ui.settings != null){
@@ -386,7 +405,23 @@ public class SettingsMenuDialog extends BaseDialog{
             }
             return s + "%";
         });
+
+        graphics.sliderPref("unitlaseropacity", 100, 0, 100, 5, s -> s + "%");
         graphics.sliderPref("bridgeopacity", 100, 0, 100, 5, s -> s + "%");
+
+        graphics.sliderPref("maxmagnificationmultiplierpercent", 100, 100, 200, 25, s -> {
+            if(ui.settings != null){
+                Core.settings.put("maxzoomingamemultiplier", (float)s / 100.0f);
+            }
+            return s + "%";
+        });
+
+        graphics.sliderPref("minmagnificationmultiplierpercent", 100, 100, 300, 25, s -> {
+            if(ui.settings != null){
+                Core.settings.put("minzoomingamemultiplier", (float)s / 100.0f);
+            }
+            return s + "%";
+        });
 
         if(!mobile){
             graphics.checkPref("vsync", true, b -> Core.graphics.setVSync(b));
@@ -438,6 +473,7 @@ public class SettingsMenuDialog extends BaseDialog{
 
         graphics.checkPref("effects", true);
         graphics.checkPref("atmosphere", !mobile);
+        graphics.checkPref("drawlight", true);
         graphics.checkPref("destroyedblocks", true);
         graphics.checkPref("blockstatus", false);
         graphics.checkPref("playerchat", true);
@@ -446,6 +482,9 @@ public class SettingsMenuDialog extends BaseDialog{
         }
         graphics.checkPref("minimap", !mobile);
         graphics.checkPref("smoothcamera", true);
+        if(!mobile){
+            graphics.checkPref("detach-camera", false);
+        }
         graphics.checkPref("position", false);
         if(!mobile){
             graphics.checkPref("mouseposition", false);
@@ -457,7 +496,8 @@ public class SettingsMenuDialog extends BaseDialog{
         graphics.checkPref("animatedwater", true);
 
         if(Shaders.shield != null){
-            graphics.checkPref("animatedshields", !mobile);
+            //animated shields are off by default on android (generally lower spec devices)
+            graphics.checkPref("animatedshields", !android);
         }
 
         graphics.checkPref("bloom", true, val -> renderer.toggleBloom(val));
@@ -469,16 +509,12 @@ public class SettingsMenuDialog extends BaseDialog{
         });
 
         //iOS (and possibly Android) devices do not support linear filtering well, so disable it
-        if(!ios){
-            graphics.checkPref("linear", !mobile, b -> {
-                for(Texture tex : Core.atlas.getTextures()){
-                    TextureFilter filter = b ? TextureFilter.linear : TextureFilter.nearest;
-                    tex.setFilter(filter, filter);
-                }
-            });
-        }else{
-            settings.put("linear", false);
-        }
+        graphics.checkPref("linear", !mobile, b -> {
+            for(Texture tex : Core.atlas.getTextures()){
+                TextureFilter filter = b ? TextureFilter.linear : TextureFilter.nearest;
+                tex.setFilter(filter, filter);
+            }
+        });
 
         if(Core.settings.getBool("linear")){
             for(Texture tex : Core.atlas.getTextures()){
@@ -489,6 +525,10 @@ public class SettingsMenuDialog extends BaseDialog{
 
         graphics.checkPref("skipcoreanimation", false);
         graphics.checkPref("hidedisplays", false);
+
+        if(OS.isMac){
+            graphics.checkPref("macnotch", false);
+        }
 
         if(!mobile){
             Core.settings.put("swapdiagonal", false);
@@ -520,7 +560,9 @@ public class SettingsMenuDialog extends BaseDialog{
                 path = path.startsWith("/") ? path.substring(1) : path;
                 zos.putNextEntry(new ZipEntry(path));
                 if(!add.isDirectory()){
-                    Streams.copy(add.read(), zos);
+                    try(var stream = add.read()){
+                        Streams.copy(stream, zos);
+                    }
                 }
                 zos.closeEntry();
             }

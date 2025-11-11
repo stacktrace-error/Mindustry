@@ -11,6 +11,7 @@ import mindustry.entities.bullet.*;
 import mindustry.game.EventType.*;
 import mindustry.gen.*;
 import mindustry.graphics.*;
+import mindustry.logic.*;
 import mindustry.type.*;
 import mindustry.ui.*;
 import mindustry.world.consumers.*;
@@ -28,7 +29,7 @@ public class ItemTurret extends Turret{
 
     /** Initializes accepted ammo map. Format: [item1, bullet1, item2, bullet2...] */
     public void ammo(Object... objects){
-        ammoTypes = ObjectMap.of(objects);
+        ammoTypes = OrderedMap.of(objects);
     }
 
     /** Limits bullet range to this turret's range value. */
@@ -49,6 +50,7 @@ public class ItemTurret extends Turret{
 
         stats.remove(Stat.itemCapacity);
         stats.add(Stat.ammo, StatValues.ammo(ammoTypes));
+        stats.add(Stat.ammoCapacity, maxAmmo / ammoPerShot, StatUnit.shots);
     }
 
     @Override
@@ -79,8 +81,8 @@ public class ItemTurret extends Turret{
 
             @Override
             public float efficiency(Building build){
-                //valid when there's any ammo in the turret
-                return build instanceof ItemTurretBuild it && !it.ammo.isEmpty() ? 1f : 0f;
+                //valid when it can shoot
+                return build instanceof ItemTurretBuild it && it.ammo.size > 0 && (it.ammo.peek().amount >= ammoPerShot || it.cheating()) ? 1f : 0f;
             }
 
             @Override
@@ -104,6 +106,14 @@ public class ItemTurret extends Turret{
             if(!hasAmmo() && cheating() && ammoTypes.size > 0){
                 handleItem(this, ammoTypes.keys().next());
             }
+        }
+
+        @Override
+        public Object senseObject(LAccess sensor){
+            return switch(sensor){
+                case currentAmmoType -> ammo.size > 0 ? ((ItemEntry)ammo.peek()).item : null;
+                default -> super.senseObject(sensor);
+            };
         }
 
         @Override
@@ -196,12 +206,12 @@ public class ItemTurret extends Turret{
             int amount = read.ub();
             for(int i = 0; i < amount; i++){
                 Item item = Vars.content.item(revision < 2 ? read.ub() : read.s());
-                short a = read.s();
+                int itemAmount = Math.min(read.s(), maxAmmo);
 
                 //only add ammo if this is a valid ammo type
                 if(item != null && ammoTypes.containsKey(item)){
-                    totalAmmo += a;
-                    ammo.add(new ItemEntry(item, a));
+                    totalAmmo += itemAmount;
+                    ammo.add(new ItemEntry(item, itemAmount));
                 }
             }
         }

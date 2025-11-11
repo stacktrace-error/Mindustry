@@ -6,6 +6,7 @@ import arc.func.*;
 import arc.graphics.*;
 import arc.struct.*;
 import arc.util.*;
+import mindustry.ai.*;
 import mindustry.content.*;
 import mindustry.ctype.*;
 import mindustry.entities.bullet.*;
@@ -26,6 +27,7 @@ import static mindustry.Vars.*;
 public class ContentLoader{
     private ObjectMap<String, MappableContent>[] contentNameMap = new ObjectMap[ContentType.all.length];
     private Seq<Content>[] contentMap = new Seq[ContentType.all.length];
+    private ObjectMap<String, MappableContent> nameMap = new ObjectMap<>();
     private MappableContent[][] temporaryMapper;
     private @Nullable LoadedMod currentMod;
     private @Nullable Content lastAdded;
@@ -38,10 +40,26 @@ public class ContentLoader{
         }
     }
 
+    public ContentLoader copy(){
+        var result = new ContentLoader();
+        result.initialization.addAll(initialization);
+        result.lastAdded = lastAdded;
+        result.currentMod = currentMod;
+        result.temporaryMapper = temporaryMapper;
+        result.nameMap.putAll(nameMap);
+        for(int i = 0; i < contentMap.length; i++){
+            result.contentMap[i].addAll(contentMap[i]);
+            result.contentNameMap[i].putAll(contentNameMap[i]);
+        }
+        return result;
+    }
+
     /** Creates all base types. */
     public void createBaseContent(){
+        UnitCommand.loadAll();
         TeamEntries.load();
         Items.load();
+        UnitStance.loadAll(); //needs to access items
         StatusEffects.load();
         Liquids.load();
         Bullets.load();
@@ -78,13 +96,14 @@ public class ContentLoader{
         for(int k = 0; k < contentMap.length; k++){
             Log.debug("[@]: loaded @", ContentType.all[k].name(), contentMap[k].size);
         }
-        Log.debug("Total content loaded: @", Seq.with(ContentType.all).mapInt(c -> contentMap[c.ordinal()].size).sum());
+        Log.debug("Total content loaded: @", Seq.with(ContentType.all).sum(c -> contentMap[c.ordinal()].size));
         Log.debug("-------------------");
     }
 
     /** Calls Content#init() on everything. Use only after all modules have been created. */
     public void init(){
         initialize(Content::init);
+        initialize(Content::postInit);
         if(logicVars != null) logicVars.init();
         Events.fire(new ContentInitEvent());
     }
@@ -168,6 +187,13 @@ public class ContentLoader{
 
     public void handleMappableContent(MappableContent content){
         if(contentNameMap[content.getContentType().ordinal()].containsKey(content.name)){
+            var list = contentMap[content.getContentType().ordinal()];
+
+            //this method is only called when registering content, and after handleContent.
+            //If this is the last registered content, and it is invalid, make sure to remove it from the list to prevent invalid stuff from being registered
+            if(list.size > 0 && list.peek() == content){
+                list.pop();
+            }
             throw new IllegalArgumentException("Two content objects cannot have the same name! (issue: '" + content.name + "')");
         }
         if(currentMod != null){
@@ -177,10 +203,16 @@ public class ContentLoader{
             }
         }
         contentNameMap[content.getContentType().ordinal()].put(content.name, content);
+        nameMap.put(content.name, content);
     }
 
     public void setTemporaryMapper(MappableContent[][] temporaryMapper){
         this.temporaryMapper = temporaryMapper;
+    }
+
+    /** @return the last registered content with the specified name. Note that the content loader makes no attempt to resolve name conflicts. This method can be unreliable. */
+    public @Nullable MappableContent byName(String name){
+        return nameMap.get(name);
     }
 
     public Seq<Content>[] getContentMap(){
@@ -194,6 +226,7 @@ public class ContentLoader{
     }
 
     public <T extends MappableContent> T getByName(ContentType type, String name){
+        if(name == null) return null;
         var map = contentNameMap[type.ordinal()];
 
         if(map == null) return null;
@@ -227,6 +260,10 @@ public class ContentLoader{
 
     public <T extends Content> Seq<T> getBy(ContentType type){
         return (Seq<T>)contentMap[type.ordinal()];
+    }
+
+    public <T extends Content> ObjectMap<String, T> getNamesBy(ContentType type){
+        return (ObjectMap<String, T>)contentNameMap[type.ordinal()];
     }
 
     //utility methods, just makes things a bit shorter
@@ -309,5 +346,37 @@ public class ContentLoader{
 
     public Planet planet(String name){
         return getByName(ContentType.planet, name);
+    }
+
+    public Seq<Weather> weathers(){
+        return getBy(ContentType.weather);
+    }
+
+    public Weather weather(String name){
+        return getByName(ContentType.weather, name);
+    }
+
+    public Seq<UnitStance> unitStances(){
+        return getBy(ContentType.unitStance);
+    }
+
+    public UnitStance unitStance(int id){
+        return getByID(ContentType.unitStance, id);
+    }
+
+    public UnitStance unitStance(String name){
+        return getByName(ContentType.unitStance, name);
+    }
+
+    public Seq<UnitCommand> unitCommands(){
+        return getBy(ContentType.unitCommand);
+    }
+
+    public UnitCommand unitCommand(int id){
+        return getByID(ContentType.unitCommand, id);
+    }
+
+    public UnitCommand unitCommand(String name){
+        return getByName(ContentType.unitCommand, name);
     }
 }

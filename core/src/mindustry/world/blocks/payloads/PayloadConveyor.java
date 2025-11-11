@@ -7,6 +7,7 @@ import arc.math.geom.*;
 import arc.util.*;
 import arc.util.io.*;
 import mindustry.annotations.Annotations.*;
+import mindustry.ctype.Content;
 import mindustry.entities.*;
 import mindustry.gen.*;
 import mindustry.graphics.*;
@@ -21,6 +22,7 @@ public class PayloadConveyor extends Block{
     public @Load("@-edge") TextureRegion edgeRegion;
     public Interp interp = Interp.pow5;
     public float payloadLimit = 3f;
+    public boolean pushUnits = true;
 
     public PayloadConveyor(String name){
         super(name);
@@ -30,6 +32,7 @@ public class PayloadConveyor extends Block{
         update = true;
         outputsPayload = true;
         noUpdateDisabled = true;
+        acceptsUnitPayloads = true;
         priority = TargetPriority.transport;
         envEnabled |= Env.space | Env.underwater;
         sync = true;
@@ -45,10 +48,12 @@ public class PayloadConveyor extends Block{
     public void drawPlace(int x, int y, int rotation, boolean valid){
         super.drawPlace(x, y, rotation, valid);
 
+        int ntrns = size;
+
         for(int i = 0; i < 4; i++){
-            Building other = world.build(x + Geometry.d4x[i] * size, y + Geometry.d4y[i] * size);
-            if(other != null && other.block.outputsPayload && other.block.size == size){
-                Drawf.selected(other.tileX(), other.tileY(), other.block, other.team.color);
+            Tile tile = world.tile(x + Geometry.d4x[i] * ntrns, y + Geometry.d4y[i] * ntrns);
+            if(tile != null && tile.build != null && tile.isCenter() && tile.build.block.outputsPayload && tile.build.block.size == size && (i == rotation || tile.block().rotate && i == (tile.build.rotation + 2) % 4)){
+                Drawf.selected(tile.x, tile.y, tile.block(), tile.build.team.color);
             }
         }
     }
@@ -190,6 +195,12 @@ public class PayloadConveyor extends Block{
         }
 
         @Override
+        public void onDestroyed(){
+            if(item != null) item.destroyed();
+            super.onDestroyed();
+        }
+
+        @Override
         public void draw(){
             super.draw();
 
@@ -250,6 +261,8 @@ public class PayloadConveyor extends Block{
 
         @Override
         public void unitOn(Unit unit){
+            if(!pushUnits || !enabled || (lastInterp == 0f)) return;
+
             //calculate derivative of units moved last frame
             float delta = (curInterp - lastInterp) * size * tilesize;
             Tmp.v1.trns(rotdeg(), delta * moveForce).scl(1f / Math.max(unit.mass(), 201f));
@@ -271,6 +284,13 @@ public class PayloadConveyor extends Block{
             this.animation = 0;
 
             updatePayload();
+        }
+
+        @Override
+        public double sense(Content content){
+            if(item instanceof UnitPayload up && up.unit.type == content) return 1;
+            if(item instanceof BuildPayload bp && bp.build.block == content) return 1;
+            return super.sense(content);
         }
 
         @Override

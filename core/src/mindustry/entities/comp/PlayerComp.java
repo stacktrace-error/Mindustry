@@ -8,6 +8,8 @@ import arc.scene.ui.layout.*;
 import arc.util.*;
 import arc.util.pooling.*;
 import mindustry.*;
+import mindustry.ai.*;
+import mindustry.ai.types.*;
 import mindustry.annotations.Annotations.*;
 import mindustry.content.*;
 import mindustry.entities.units.*;
@@ -31,11 +33,13 @@ abstract class PlayerComp implements UnitController, Entityc, Syncc, Timerc, Dra
 
     @Import float x, y;
 
-    @ReadOnly Unit unit = Nulls.unit;
+    @ReadOnly @Nullable Unit unit;
     transient @Nullable NetConnection con;
     @ReadOnly Team team = Team.sharded;
     @SyncLocal boolean typing, shooting, boosting;
     @SyncLocal float mouseX, mouseY;
+    /** command the unit had before it was controlled. */
+    @Nullable @NoSync UnitCommand lastCommand;
     boolean admin;
     String name = "frog";
     Color color = new Color();
@@ -43,13 +47,14 @@ abstract class PlayerComp implements UnitController, Entityc, Syncc, Timerc, Dra
     transient float deathTimer;
     transient String lastText = "";
     transient float textFadeTime;
+    transient Ratekeeper itemDepositRate = new Ratekeeper();
 
-    transient private Unit lastReadUnit = Nulls.unit;
+    transient private @Nullable Unit lastReadUnit;
     transient private int wrongReadUnits;
     transient @Nullable Unit justSwitchFrom, justSwitchTo;
 
     public boolean isBuilder(){
-        return unit.canBuild();
+        return unit != null && unit.canBuild();
     }
 
     public @Nullable CoreBuild closestCore(){
@@ -60,15 +65,27 @@ abstract class PlayerComp implements UnitController, Entityc, Syncc, Timerc, Dra
         return team.core();
     }
 
-    /** @return largest/closest core, with largest cores getting priority */
+    /** @return largest/closest core, with the largest cores getting priority */
     @Nullable
     public CoreBuild bestCore(){
-        return team.cores().min(Structs.comps(Structs.comparingInt(c -> -c.block.size), Structs.comparingFloat(c -> c.dst(x, y))));
+        var cores = team.cores();
+        //if someone screws up the map and adds an invalid core, prioritize the core that's supported
+        //if there's only one core, there are no other options
+        return cores.min(b -> cores.size == 1 || ((CoreBlock)b.block).unitType.supportsEnv(state.rules.env), Structs.comps(Structs.comparingInt(c -> -c.block.size), Structs.comparingFloat(c -> c.dst2(x, y))));
     }
 
     public TextureRegion icon(){
         //display default icon for dead players
-        if(dead()) return core() == null ? UnitTypes.alpha.fullIcon : ((CoreBlock)bestCore().block).unitType.fullIcon;
+        if(dead()){
+            if(core() == null){
+                return UnitTypes.alpha.uiIcon;
+            }
+            var bestCore = (CoreBuild)bestCore();
+            if(bestCore == null){
+                return UnitTypes.alpha.uiIcon;
+            }
+            return ((CoreBlock)bestCore.block).unitType.uiIcon;
+        }
 
         return unit.icon();
     }
@@ -84,7 +101,7 @@ abstract class PlayerComp implements UnitController, Entityc, Syncc, Timerc, Dra
         x = y = 0f;
         if(!dead()){
             unit.resetController();
-            unit = Nulls.unit;
+            unit = null;
         }
     }
 
@@ -100,7 +117,7 @@ abstract class PlayerComp implements UnitController, Entityc, Syncc, Timerc, Dra
 
     @Replace
     public float clipSize(){
-        return unit.isNull() ? 20 : unit.type.hitSize * 2f;
+        return unit == null ? 20 : unit.type.hitSize * 2f;
     }
 
     @Override
@@ -126,17 +143,18 @@ abstract class PlayerComp implements UnitController, Entityc, Syncc, Timerc, Dra
         unit = lastReadUnit;
         unit(set);
         lastReadUnit = unit;
-
-        unit.aim(mouseX, mouseY);
-        //this is only necessary when the thing being controlled isn't synced
-        unit.controlWeapons(shooting, shooting);
-        //extra precaution, necessary for non-synced things
-        unit.controller(this);
+        if(unit != null){
+            unit.aim(mouseX, mouseY);
+            //this is only necessary when the thing being controlled isn't synced
+            unit.controlWeapons(shooting, shooting);
+            //extra precaution, necessary for non-synced things
+            unit.controller(this);
+        }
     }
 
     @Override
     public void update(){
-        if(!unit.isValid()){
+        if(unit != null && !unit.isValid()){
             clearUnit();
         }
 
@@ -176,39 +194,52 @@ abstract class PlayerComp implements UnitController, Entityc, Syncc, Timerc, Dra
     @Override
     public void remove(){
         //clear unit upon removal
-        if(!unit.isNull()){
+        if(unit != null){
             clearUnit();
         }
+
+        lastReadUnit = null;
+        justSwitchTo = justSwitchFrom = null;
     }
 
     public void team(Team team){
         this.team = team;
-        unit.team(team);
+        if(unit != null){
+            unit.team(team);
+        }
     }
 
     public void clearUnit(){
-        unit(Nulls.unit);
+        unit(null);
     }
 
-    public Unit unit(){
+    public @Nullable Unit unit(){
         return unit;
     }
 
-    public void unit(Unit unit){
+    public void unit(@Nullable Unit unit){
         //refuse to switch when the unit was just transitioned from
         if(isLocal() && unit == justSwitchFrom && justSwitchFrom != null && justSwitchTo != null){
             return;
         }
 
-        if(unit == null) throw new IllegalArgumentException("Unit cannot be null. Use clearUnit() instead.");
         if(this.unit == unit) return;
 
-        if(this.unit != Nulls.unit){
+        //save last command this unit had
+        if(unit != null && unit.controller() instanceof CommandAI ai){
+            lastCommand = ai.command;
+        }
+
+        if(this.unit != null){
             //un-control the old unit
             this.unit.resetController();
+            //restore last command issued before it was controlled
+            if(lastCommand != null && this.unit.controller() instanceof CommandAI ai){
+                ai.command(lastCommand);
+            }
         }
         this.unit = unit;
-        if(unit != Nulls.unit){
+        if(unit != null){
             unit.team(team);
             unit.controller(this);
 
@@ -227,7 +258,7 @@ abstract class PlayerComp implements UnitController, Entityc, Syncc, Timerc, Dra
     }
 
     boolean dead(){
-        return unit.isNull() || !unit.isValid();
+        return unit == null || !unit.isValid();
     }
 
     String ip(){
@@ -260,7 +291,7 @@ abstract class PlayerComp implements UnitController, Entityc, Syncc, Timerc, Dra
 
     @Override
     public void draw(){
-        if(unit != null && unit.inFogTo(Vars.player.team())) return;
+        if(unit == null || name == null || unit.inFogTo(Vars.player.team())) return;
 
         Draw.z(Layer.playerName);
         float z = Drawf.text();

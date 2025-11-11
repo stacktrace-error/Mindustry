@@ -29,6 +29,7 @@ public class StackConveyor extends Block implements Autotiler{
     public @Load("@-stack") TextureRegion stackRegion;
     /** requires power to work properly */
     public @Load(value = "@-glow") TextureRegion glowRegion;
+    public @Load(value = "@-edge-glow", fallback = "@-glow") TextureRegion edgeGlowRegion;
 
     public float glowAlpha = 1f;
     public Color glowColor = Pal.redLight;
@@ -132,7 +133,7 @@ public class StackConveyor extends Block implements Autotiler{
             //draw inputs
             if(state == stateLoad){
                 for(int i = 0; i < 4; i++){
-                    int dir = rotation - i;
+                    int dir = Mathf.mod(rotation - i, 4);
                     var near = nearby(dir);
                     if((blendprox & (1 << i)) != 0 && i != 0 && near != null && !near.block.squareSprite){
                         Draw.rect(sliced(regions[0], SliceMode.bottom), x + Geometry.d4x(dir) * tilesize*0.75f, y + Geometry.d4y(dir) * tilesize*0.75f, (float)(dir*90));
@@ -154,7 +155,7 @@ public class StackConveyor extends Block implements Autotiler{
                 Draw.z(Layer.blockAdditive);
                 Draw.color(glowColor, glowAlpha * power.status);
                 Draw.blend(Blending.additive);
-                Draw.rect(glowRegion, x, y, rotation * 90);
+                Draw.rect(state == stateLoad ? edgeGlowRegion : glowRegion, x, y, rotation * 90);
                 Draw.blend();
                 Draw.color();
                 Draw.z(Layer.block - 0.1f);
@@ -189,11 +190,23 @@ public class StackConveyor extends Block implements Autotiler{
         }
 
         @Override
+        public void dropped(){
+            super.dropped();
+            var prev = Geometry.d4[(rotation + 2) % 4];
+            if(items.any()){
+                link = Point2.pack(tile.x + prev.x, tile.y + prev.y);
+                cooldown = 0f;
+            }else{
+                link = -1;
+            }
+        }
+
+        @Override
         public void drawCracks(){
             Draw.z(Layer.block - 0.15f);
             super.drawCracks();
         }
-        
+
         @Override
         public void payloadDraw(){
             Draw.rect(block.fullIcon, x, y);
@@ -251,7 +264,8 @@ public class StackConveyor extends Block implements Autotiler{
 
         @Override
         public void updateTile(){
-            float eff = enabled ? (efficiency + baseEfficiency) : 0f;
+            //the item still needs to be "reeled" in when disabled
+            float eff = enabled ? (efficiency + baseEfficiency) : 1f;
 
             //reel in crater
             if(cooldown > 0f) cooldown = Mathf.clamp(cooldown - speed * eff * delta(), 0f, recharge);
@@ -271,31 +285,29 @@ public class StackConveyor extends Block implements Autotiler{
             if(!enabled) return;
 
             if(state == stateUnload){ //unload
-                while(lastItem != null && (!outputRouter ? moveForward(lastItem) : dump(lastItem))){
+                while(lastItem != null && !outputRouter ? moveForward(lastItem) : dump(lastItem)){
                     if(!outputRouter){
                         items.remove(lastItem, 1);
                     }
 
-                    if(items.empty()){
+                    if(!items.has(lastItem)){
                         poofOut();
                         lastItem = null;
+                        break;
                     }
                 }
             }else{ //transfer
                 if(state != stateLoad || (items.total() >= getMaximumAccepted(lastItem))){
-                    if(front() instanceof StackConveyorBuild e && e.team == team){
-                        //sleep if its occupied
-                        if(e.link == -1){
-                            e.items.add(items);
-                            e.lastItem = lastItem;
-                            e.link = tile.pos();
-                            //▲ to | from ▼
-                            link = -1;
-                            items.clear();
+                    if(front() instanceof StackConveyorBuild e && e.team == team && e.link == -1){
+                        e.items.add(items);
+                        e.lastItem = lastItem;
+                        e.link = tile.pos();
+                        //▲ to | from ▼
+                        link = -1;
+                        items.clear();
 
-                            cooldown = recharge;
-                            e.cooldown = 1;
-                        }
+                        cooldown = recharge;
+                        e.cooldown = 1;
                     }
                 }
             }
@@ -385,6 +397,7 @@ public class StackConveyor extends Block implements Autotiler{
 
             link = read.i();
             cooldown = read.f();
+            lastItem = items.first();
         }
     }
 }

@@ -8,6 +8,7 @@ import arc.struct.*;
 import arc.util.*;
 import mindustry.*;
 import mindustry.ai.*;
+import mindustry.annotations.Annotations.*;
 import mindustry.gen.*;
 import mindustry.type.*;
 import mindustry.world.*;
@@ -55,6 +56,19 @@ public class Teams{
         return Geometry.findClosest(x, y, get(team).cores);
     }
 
+    public boolean anyEnemyCoresWithinBuildRadius(Team team, float x, float y){
+        for(TeamData data : active){
+            if(team != data.team){
+                for(CoreBuild tile : data.cores){
+                    if(tile.within(x, y, state.rules.buildRadius(tile.team) + tilesize)){
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     public boolean anyEnemyCoresWithin(Team team, float x, float y, float radius){
         for(TeamData data : active){
             if(team != data.team){
@@ -80,7 +94,12 @@ public class Teams{
 
     /** Returns team data by type. */
     public TeamData get(Team team){
-        return map[team.id] == null ? (map[team.id] = new TeamData(team)) : map[team.id];
+        var data = map[team.id];
+        if(data != null){
+            return data;
+        }else{
+            return map[team.id] = new TeamData(team);
+        }
     }
 
     public @Nullable TeamData getOrNull(Team team){
@@ -110,6 +129,15 @@ public class Teams{
     public Seq<TeamData> getActive(){
         active.removeAll(t -> !t.active());
         return active;
+    }
+
+    public void updateActive(Team team){
+        TeamData data = get(team);
+        //register in active list if needed
+        if(data.active() && !active.contains(data)){
+            active.add(data);
+            updateEnemies();
+        }
     }
 
     public void registerCore(CoreBuild core){
@@ -239,8 +267,12 @@ public class Teams{
     }
 
     public static class TeamData{
+        private static final IntSeq derelictBuffer = new IntSeq();
+
         public final Team team;
 
+        /** Handles building ""bases"". */
+        public @Nullable BaseBuilderAI buildAi;
         /** Handles RTS unit control. */
         public @Nullable RtsAI rtsAi;
 
@@ -249,7 +281,7 @@ public class Teams{
         /** Enemies with cores or spawn points. */
         public Team[] coreEnemies = {};
         /** Planned blocks for drones. This is usually only blocks that have been broken. */
-        public Queue<BlockPlan> plans = new Queue<>();
+        public Queue<BlockPlan> plans = new Queue<>(16, BlockPlan.class);
 
         /** List of live cores of this team. */
         public final Seq<CoreBuild> cores = new Seq<>();
@@ -305,12 +337,16 @@ public class Teams{
 
             //convert all team tiles to neutral, randomly killing them
             for(var b : builds){
+                if(b.block.privileged) continue;
+
                 if(b instanceof CoreBuild){
                     b.kill();
                 }else{
                     scheduleDerelict(b);
                 }
             }
+
+            finishScheduleDerelict();
 
             //kill all units randomly
             units.each(u -> Time.run(Mathf.random(0f, 60f * 5f), () -> {
@@ -321,21 +357,7 @@ public class Teams{
             }));
         }
 
-        /** Make all buildings within this range derelict / explode. */
-        public void makeDerelict(float x, float y, float range){
-            var builds = new Seq<Building>();
-            if(buildingTree != null){
-                buildingTree.intersect(x - range, y - range, range * 2f, range * 2f, builds);
-            }
-
-            for(var build : builds){
-                if(build.within(x, y, range)){
-                    scheduleDerelict(build);
-                }
-            }
-        }
-
-        /** Make all buildings within this range explode. */
+        /** Make all buildings within this range derelict/explode. */
         public void timeDestroy(float x, float y, float range){
             var builds = new Seq<Building>();
             if(buildingTree != null){
@@ -343,21 +365,31 @@ public class Teams{
             }
 
             for(var build : builds){
-                if(build.within(x, y, range) && !cores.contains(c -> c.within(x, y, range))){
-                    //TODO GPU driver bugs?
-                    build.kill();
-                    //Time.run(Mathf.random(0f, 60f * 6f), build::kill);
+                if(!build.block.privileged && build.within(x, y, range) && !cores.contains(c -> c.within(build, range))){
+                    scheduleDerelict(build);
                 }
             }
+            finishScheduleDerelict();
         }
 
         private void scheduleDerelict(Building build){
-            //TODO this may cause a lot of packet spam, optimize?
-            Call.setTeam(build, Team.derelict);
+            //queue block to be handled later, avoid packet spam
+            derelictBuffer.add(build.pos());
 
-            if(Mathf.chance(0.25)){
+            if(build.getPayload() instanceof UnitPayload){
+                Call.destroyPayload(build);
+            }
+
+            if(Mathf.chance(0.2)){
                 Time.run(Mathf.random(0f, 60f * 6f), build::kill);
             }
+            //don't bother checking previous for performance reasons
+            build.addPlan(false, true);
+        }
+
+        private void finishScheduleDerelict(){
+            derelictBuffer.chunked(1000, values -> Call.setTeams(values, Team.derelict));
+            derelictBuffer.clear();
         }
 
         //this is just an alias for consistency
@@ -391,11 +423,16 @@ public class Teams{
         }
 
         public boolean active(){
-            return (team == state.rules.waveTeam && state.rules.waves) || cores.size > 0;
+            return (team == state.rules.waveTeam && state.rules.waves) || cores.size > 0 || buildings.size > 0 || (team == Team.neoplastic && units.size > 0);
         }
 
         public boolean hasCore(){
             return cores.size > 0;
+        }
+
+        /** @return whether this team has any cores (standard team), or any hearts (neoplasm). */
+        public boolean isAlive(){
+            return hasCore();
         }
 
         public boolean noCores(){
@@ -409,7 +446,7 @@ public class Teams{
 
         /** @return whether this team is controlled by the AI and builds bases. */
         public boolean hasAI(){
-            return team.rules().rtsAi;
+            return team.rules().rtsAi || team.rules().buildAi;
         }
 
         @Override
@@ -421,14 +458,23 @@ public class Teams{
         }
     }
 
+    @Remote(called = Loc.server, unreliable = true)
+    public static void destroyPayload(Building build){
+        if(build != null && build.getPayload() instanceof UnitPayload && build.takePayload() instanceof UnitPayload unit){
+            unit.dump();
+            unit.unit.killed();
+        }
+    }
+
     /** Represents a block made by this team that was destroyed somewhere on the map.
      * This does not include deconstructed blocks.*/
     public static class BlockPlan{
-        public final short x, y, rotation, block;
+        public final short x, y, rotation;
+        public final Block block;
         public final Object config;
         public boolean removed;
 
-        public BlockPlan(int x, int y, short rotation, short block, Object config){
+        public BlockPlan(int x, int y, short rotation, Block block, Object config){
             this.x = (short)x;
             this.y = (short)y;
             this.rotation = rotation;

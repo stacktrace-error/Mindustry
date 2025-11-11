@@ -5,7 +5,6 @@ import arc.math.*;
 import arc.math.geom.*;
 import arc.struct.*;
 import arc.util.*;
-import mindustry.content.*;
 import mindustry.gen.*;
 import mindustry.world.*;
 
@@ -13,7 +12,7 @@ import static mindustry.Vars.*;
 
 public class EntityCollisions{
     //move in 1-unit chunks (can this be made more efficient?)
-    private static final float seg = 1f;
+    private static final float seg = 1f, maxDelta = 1000f;
 
     //tile collisions
     private Vec2 vector = new Vec2(), l1 = new Vec2();
@@ -35,7 +34,11 @@ public class EntityCollisions{
     }
 
     public void move(Hitboxc entity, float deltax, float deltay, SolidPred solidCheck){
-        if(Math.abs(deltax) < 0.0001f & Math.abs(deltay) < 0.0001f) return;
+        //check for NaN
+        if((Math.abs(deltax) < 0.0001f && Math.abs(deltay) < 0.0001f) || deltax != deltax || deltay != deltay) return;
+
+        deltax = Mathf.clamp(deltax, -maxDelta, maxDelta);
+        deltay = Mathf.clamp(deltay, -maxDelta, maxDelta);
 
         boolean movedx = false;
         entity.hitboxTile(r1);
@@ -82,8 +85,8 @@ public class EntityCollisions{
 
                     if(tmp.overlaps(r1)){
                         Vec2 v = Geometry.overlap(r1, tmp, x);
-                        if(x) r1.x += v.x;
-                        if(!x) r1.y += v.y;
+                        r1.x += v.x;
+                        r1.y += v.y;
                     }
                 }
             }
@@ -129,7 +132,7 @@ public class EntityCollisions{
 
     public static boolean legsSolid(int x, int y){
         Tile tile = world.tile(x, y);
-        return tile == null || tile.staticDarkness() >= 2 || (tile.floor().solid && tile.block() == Blocks.air);
+        return tile == null || tile.legSolid();
     }
 
     public static boolean waterSolid(int x, int y){
@@ -167,7 +170,7 @@ public class EntityCollisions{
         }
     }
 
-    private boolean collide(float x1, float y1, float w1, float h1, float vx1, float vy1,
+    public static boolean collide(float x1, float y1, float w1, float h1, float vx1, float vy1,
                             float x2, float y2, float w2, float h2, float vx2, float vy2, Vec2 out){
         float px = vx1, py = vy1;
 

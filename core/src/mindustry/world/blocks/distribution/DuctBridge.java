@@ -2,6 +2,8 @@ package mindustry.world.blocks.distribution;
 
 import mindustry.gen.*;
 import mindustry.type.*;
+import mindustry.world.*;
+import mindustry.world.meta.*;
 
 public class DuctBridge extends DirectionBridge{
     public float speed = 5f;
@@ -15,12 +17,18 @@ public class DuctBridge extends DirectionBridge{
         isDuct = true;
     }
 
+    @Override
+    public void setStats(){
+        super.setStats();
+        stats.add(Stat.itemsMoved, 60f / speed, StatUnit.itemsSecond);
+    }
+
     public class DuctBridgeBuild extends DirectionBridgeBuild{
         public float progress = 0f;
 
         @Override
         public void updateTile(){
-            var link = findLink();
+            var link = lastLink = findLink();
             if(link != null){
                 link.occupied[rotation % 4] = this;
                 if(items.any() && link.items.total() < link.block.itemCapacity){
@@ -43,7 +51,7 @@ public class DuctBridge extends DirectionBridge{
             }
 
             for(int i = 0; i < 4; i++){
-                if(occupied[i] == null || occupied[i].rotation != i || !occupied[i].isValid()){
+                if(occupied[i] == null || occupied[i].rotation != i || !occupied[i].isValid() || occupied[i].lastLink != this){
                     occupied[i] = null;
                 }
             }

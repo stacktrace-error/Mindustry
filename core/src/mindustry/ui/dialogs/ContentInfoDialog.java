@@ -1,6 +1,7 @@
 package mindustry.ui.dialogs;
 
 import arc.*;
+import arc.scene.actions.*;
 import arc.scene.ui.*;
 import arc.scene.ui.layout.*;
 import arc.struct.*;
@@ -9,6 +10,7 @@ import mindustry.ctype.*;
 import mindustry.gen.*;
 import mindustry.graphics.*;
 import mindustry.input.*;
+import mindustry.ui.*;
 import mindustry.world.meta.*;
 
 import static arc.Core.*;
@@ -22,7 +24,7 @@ public class ContentInfoDialog extends BaseDialog{
         addCloseButton();
 
         keyDown(key -> {
-            if(key == keybinds.get(Binding.block_info).key){
+            if(key == Binding.blockInfo.value.key){
                 Core.app.post(this::hide);
             }
         });
@@ -82,7 +84,6 @@ public class ContentInfoDialog extends BaseDialog{
                         value.display(inset);
                         inset.add().size(10f);
                     }
-
                 }).fillX().padLeft(10);
                 table.row();
             }
@@ -93,12 +94,28 @@ public class ContentInfoDialog extends BaseDialog{
             table.row();
         }
 
+        if(settings.getBool("console")){
+            table.button("@viewfields", Icon.link, Styles.grayt, () -> {
+                Class<?> contentClass = content.getClass();
+                if(contentClass.isAnonymousClass()) contentClass = contentClass.getSuperclass();
+
+                Core.app.openURI("https://mindustrygame.github.io/wiki/Modding%20Classes/" + contentClass.getSimpleName());
+            }).margin(8f).pad(4f).size(300f, 50f).row();
+        }
+
         content.displayExtra(table);
 
         ScrollPane pane = new ScrollPane(table);
+        table.marginRight(30f);
+        //TODO: some things (e.g. reconstructor requirements) are too long and screw up the layout
+        //pane.setScrollingDisabled(true, false);
         cont.add(pane);
 
-        show();
+        if(isShown()){
+            show(scene, Actions.fadeIn(0f));
+        }else{
+            show();
+        }
     }
 
 }

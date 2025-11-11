@@ -16,10 +16,11 @@ import mindustry.content.*;
 import mindustry.content.TechTree.*;
 import mindustry.core.GameState.*;
 import mindustry.entities.*;
+import mindustry.game.*;
 import mindustry.game.EventType.*;
 import mindustry.game.Objectives.*;
-import mindustry.game.*;
 import mindustry.game.Saves.*;
+import mindustry.game.Teams.*;
 import mindustry.gen.*;
 import mindustry.input.*;
 import mindustry.io.*;
@@ -53,7 +54,7 @@ public class Control implements ApplicationListener, Loadable{
 
     private Interval timer = new Interval(2);
     private boolean hiscore = false;
-    private boolean wasPaused = false;
+    private boolean wasPaused = false, backgroundPaused = false;
     private Seq<Building> toBePlaced = new Seq<>(false);
 
     public Control(){
@@ -73,6 +74,16 @@ public class Control implements ApplicationListener, Loadable{
                 Time.runTask(4f, () -> {
                     ui.showInfo("@mods.initfailed");
                 });
+            }
+            checkAutoUnlocks();
+
+            if((OS.isWindows && !OS.is64Bit && !Core.settings.getBool("nowarn32bit", false))){
+                BaseDialog dialog = new BaseDialog("@warn.32bit.title");
+                dialog.buttons.button("@ok", dialog::hide).size(120f, 64f);
+                dialog.cont.add("@warn.32bit").labelAlign(Align.center, Align.center).wrap().grow().row();
+                dialog.cont.check("@dontshowagain", val -> Core.settings.put("nowarn32bit", val));
+
+                dialog.show();
             }
         });
 
@@ -191,42 +202,32 @@ public class Control implements ApplicationListener, Loadable{
 
         Events.run(Trigger.newGame, () -> {
             var core = player.bestCore();
-
             if(core == null) return;
 
             camera.position.set(core);
             player.set(core);
 
             float coreDelay = 0f;
-
             if(!settings.getBool("skipcoreanimation") && !state.rules.pvp){
-                coreDelay = coreLandDuration;
+                coreDelay = core.launchDuration();
                 //delay player respawn so animation can play.
-                player.deathTimer = Player.deathDelay - coreLandDuration;
+                player.deathTimer = Player.deathDelay - core.launchDuration();
                 //TODO this sounds pretty bad due to conflict
                 if(settings.getInt("musicvol") > 0){
-                    Musics.land.stop();
-                    Musics.land.play();
-                    Musics.land.setVolume(settings.getInt("musicvol") / 100f);
+                    //TODO what to do if another core with different music is already playing?
+                    Music music = core.landMusic();
+                    music.stop();
+                    music.play();
+                    music.setVolume(settings.getInt("musicvol") / 100f);
                 }
 
-                app.post(() -> ui.hudfrag.showLand());
-                renderer.showLanding();
-
-                Time.run(coreLandDuration, () -> {
-                    Fx.launch.at(core);
-                    Effect.shake(5f, 5f, core);
-                    core.thrusterTime = 1f;
-
-                    if(state.isCampaign() && Vars.showSectorLandInfo && (state.rules.sector.preset == null || state.rules.sector.preset.showSectorLandInfo)){
-                        ui.announce("[accent]" + state.rules.sector.name() + "\n" +
-                        (state.rules.sector.info.resources.any() ? "[lightgray]" + bundle.get("sectors.resources") + "[white] " +
-                        state.rules.sector.info.resources.toString(" ", u -> u.emoji()) : ""), 5);
-                    }
-                });
+                renderer.showLanding(core);
             }
 
             if(state.isCampaign()){
+                if(state.rules.sector.info.importRateCache != null){
+                    state.rules.sector.info.refreshImportRates(state.rules.sector.planet);
+                }
 
                 //don't run when hosting, that doesn't really work.
                 if(state.rules.sector.planet.prebuildBase){
@@ -313,9 +314,12 @@ public class Control implements ApplicationListener, Loadable{
         "lastBuild", 0
         );
 
-        createPlayer();
-
         saves.load();
+    }
+
+    @Override
+    public void loadSync(){
+        createPlayer();
     }
 
     /** Automatically unlocks things with no requirements and no locked parents. */
@@ -332,6 +336,13 @@ public class Control implements ApplicationListener, Loadable{
     void createPlayer(){
         player = Player.create();
         player.name = Core.settings.getString("name");
+
+        String locale = Core.settings.getString("locale");
+        if(locale.equals("default")){
+            locale = Locale.getDefault().toString();
+        }
+        player.locale = locale;
+
         player.color.set(Core.settings.getInt("color-0"));
 
         if(mobile){
@@ -402,7 +413,6 @@ public class Control implements ApplicationListener, Loadable{
                 control.saves.resetSave();
             }
 
-            //for planet launches, mostly
             if(sector.preset != null){
                 sector.preset.quietUnlock();
             }
@@ -410,12 +420,16 @@ public class Control implements ApplicationListener, Loadable{
             ui.planet.hide();
             SaveSlot slot = sector.save;
             sector.planet.setLastSector(sector);
-            if(slot != null && !clearSectors && (!sector.planet.clearSectorOnLose || sector.info.hasCore)){
+
+            boolean clearSave = sector.planet.clearSectorOnLose || sector.planet.campaignRules.clearSectorOnLose;
+
+            if(slot != null && !clearSectors && (!clearSave || sector.info.hasCore)){
 
                 try{
                     boolean hadNoCore = !sector.info.hasCore;
                     reloader.begin();
-                    slot.load();
+                    //pass in a sector context to make absolutely sure the correct sector is written; it may differ from what's in the meta due to remapping.
+                    slot.load(world.makeSectorContext(sector));
                     slot.setAutosave(true);
                     state.rules.sector = sector;
                     state.rules.cloudColor = sector.planet.landCloudColor;
@@ -423,73 +437,75 @@ public class Control implements ApplicationListener, Loadable{
                     //if there is no base, simulate a new game and place the right loadout at the spawn position
                     if(state.rules.defaultTeam.cores().isEmpty() || hadNoCore){
 
-                        if(sector.planet.clearSectorOnLose){
+                        //don't carry over the spawn position and plans if the sector preset name or map size changed
+                        if(clearSave || sector.info.spawnPosition == 0 || !sector.info.sectorDataMatches(sector)){
                             playNewSector(origin, sector, reloader);
                         }else{
-                            //no spawn set -> delete the sector save
-                            if(sector.info.spawnPosition == 0){
-                                //delete old save
-                                sector.save = null;
-                                slot.delete();
-                                //play again
-                                playSector(origin, sector, reloader);
-                                return;
-                            }
+                            int spawnPos = sector.info.spawnPosition;
 
                             //set spawn for sector damage to use
-                            Tile spawn = world.tile(sector.info.spawnPosition);
+                            Tile spawn = world.tile(spawnPos);
                             spawn.setBlock(sector.planet.defaultCore, state.rules.defaultTeam);
 
-                            //add extra damage.
+                            //apply damage to simulate the sector being lost
                             SectorDamage.apply(1f);
 
-                            //reset wave so things are more fair
-                            state.wave = 1;
-                            //set up default wave time
-                            state.wavetime = state.rules.initialWaveSpacing <= 0f ? (state.rules.waveSpacing * (sector.preset == null ? 2f : sector.preset.startWaveTimeMultiplier)) : state.rules.initialWaveSpacing;
-                            //reset captured state
-                            sector.info.wasCaptured = false;
+                            //save the plans and buildings from the previous save; they will be used to re-populate the sector
+                            var previousPlans = state.rules.defaultTeam.data().plans.toArray(BlockPlan.class);
+                            var previousBuildings = state.rules.defaultTeam.data().buildings.<Building>toArray(Building.class);
+                            var previousDerelicts = Team.derelict.data().buildings.<Building>toArray(Building.class);
 
-                            if(state.rules.sector.planet.allowWaves){
-                                //re-enable waves
-                                state.rules.waves = true;
-                                //reset win wave??
-                                state.rules.winWave = state.rules.attackMode ? -1 : sector.preset != null && sector.preset.captureWave > 0 ? sector.preset.captureWave : state.rules.winWave > state.wave ? state.rules.winWave : 30;
-                            }
+                            logic.reset();
 
-                            //if there's still an enemy base left, fix it
-                            if(state.rules.attackMode){
-                                //replace all broken blocks
-                                for(var plan : state.rules.waveTeam.data().plans){
-                                    Tile tile = world.tile(plan.x, plan.y);
-                                    if(tile != null){
-                                        tile.setBlock(content.block(plan.block), state.rules.waveTeam, plan.rotation);
-                                        if(plan.config != null && tile.build != null){
-                                            tile.build.configureAny(plan.config);
-                                        }
+                            //now, load a fresh save; the old one was only used to grab previous building data
+                            playNewSector(origin, sector, reloader, new WorldParams(){{
+                                corePositionOverride = spawnPos;
+                            }}, () -> {
+                                var teamData = state.rules.defaultTeam.data();
+
+                                //all the derelicts from the new save have to be removed.
+                                for(var generatedDerelict : Team.derelict.data().buildings.<Building>toArray(Building.class)){
+                                    generatedDerelict.tile.remove();
+                                }
+
+                                //retain old derelicts from the previous save.
+                                for(var build : previousDerelicts){
+                                    Tile tile = world.tile(build.tileX(), build.tileY());
+                                    if(tile != null && tile.build == null && Build.validPlace(build.block, Team.derelict, build.tileX(), build.tileY(), build.rotation, false, false)){
+                                        tile.setBlock(build.block, Team.derelict, build.rotation, () -> build);
                                     }
                                 }
-                                state.rules.waveTeam.data().plans.clear();
-                            }
 
-                            //kill all units, since they should be dead anyway
-                            Groups.unit.clear();
-                            Groups.fire.clear();
-                            Groups.puddle.clear();
+                                //copy over all buildings from the previous save, retaining config and health, and making them derelict. contents are not saved (derelict repair clears them anyway)
+                                for(var build : previousBuildings){
+                                    Tile tile = world.tile(build.tileX(), build.tileY());
+                                    if(tile != null && tile.build == null && Build.validPlace(build.block, state.rules.defaultTeam, build.tileX(), build.tileY(), build.rotation, false, false)){
+                                        build.addPlan(false, true);
+                                        tile.setBlock(build.block, state.rules.defaultTeam, build.rotation, () -> build);
+                                        build.changeTeam(Team.derelict);
+                                        build.dropped(); //TODO: call pickedUp too? this may screw up power networks in a major way as they refer to potentially deleted entities
+                                    }
+                                }
 
-                            //reset to 0, so replaced cores don't count
-                            state.rules.defaultTeam.data().unitCap = 0;
-                            Schematics.placeLaunchLoadout(spawn.x, spawn.y);
+                                for(var build : previousBuildings){
+                                    if(build.isValid()){
+                                        build.updateProximity();
+                                    }
+                                }
 
-                            //set up camera/player locations
-                            player.set(spawn.x * tilesize, spawn.y * tilesize);
-                            camera.position.set(player);
+                                //carry over all previous plans that don't already have the corresponding block at their position
+                                for(var plan : previousPlans){
+                                    var build = world.build(plan.x, plan.y);
+                                    if(!(build != null && build.block == plan.block && build.tileX() == plan.x && build.tileY() == plan.y && build.team != state.rules.waveTeam)){
+                                        teamData.plans.add(plan);
+                                    }
+                                }
+                            });
 
-                            Events.fire(new SectorLaunchEvent(sector));
-                            Events.fire(Trigger.newGame);
-
-                            state.set(State.playing);
-                            reloader.end();
+                            Core.app.post(() -> {
+                                //blocks placed after WorldLoadEvent didn't queue an update, so fix that.
+                                renderer.minimap.updateAll();
+                            });
                         }
                     }else{
                         state.set(State.playing);
@@ -511,12 +527,21 @@ public class Control implements ApplicationListener, Loadable{
     }
 
     public void playNewSector(@Nullable Sector origin, Sector sector, WorldReloader reloader){
+        playNewSector(origin, sector, reloader, new WorldParams(), null);
+    }
+
+    public void playNewSector(@Nullable Sector origin, Sector sector, WorldReloader reloader, WorldParams params, @Nullable Runnable beforePlay){
         reloader.begin();
-        world.loadSector(sector);
+        world.loadSector(sector, params);
         state.rules.sector = sector;
-        //assign origin when launching
         sector.info.origin = origin;
         sector.info.destination = origin;
+        sector.info.attempts ++;
+
+        if(beforePlay != null){
+            beforePlay.run();
+        }
+
         logic.play();
         control.saves.saveSector(sector);
         Events.fire(new SectorLaunchEvent(sector));
@@ -535,6 +560,7 @@ public class Control implements ApplicationListener, Loadable{
         if(saves != null && saves.getCurrent() != null && saves.getCurrent().isAutosave() && !net.client() && !state.isMenu() && !state.gameOver){
             try{
                 SaveIO.save(control.saves.getCurrent().file);
+                settings.forceSave();
                 Log.info("Saved on exit.");
             }catch(Throwable t){
                 Log.err(t);
@@ -551,6 +577,7 @@ public class Control implements ApplicationListener, Loadable{
     @Override
     public void pause(){
         if(settings.getBool("backgroundpause", true) && !net.active()){
+            backgroundPaused = true;
             wasPaused = state.is(State.paused);
             if(state.is(State.playing)) state.set(State.paused);
         }
@@ -561,6 +588,7 @@ public class Control implements ApplicationListener, Loadable{
         if(state.is(State.paused) && !wasPaused && settings.getBool("backgroundpause", true) && !net.active()){
             state.set(State.playing);
         }
+        backgroundPaused = false;
     }
 
     @Override
@@ -652,13 +680,21 @@ public class Control implements ApplicationListener, Loadable{
                 core.items.each((i, a) -> i.unlock());
             }
 
+            if(backgroundPaused && settings.getBool("backgroundpause") && !net.active()){
+                state.set(State.paused);
+            }
+
             //cannot launch while paused
             if(state.isPaused() && renderer.isCutscene()){
                 state.set(State.playing);
             }
 
-            if(!net.client() && Core.input.keyTap(Binding.pause) && !renderer.isCutscene() && !scene.hasDialog() && !scene.hasKeyboard() && !ui.restart.isShown() && (state.is(State.paused) || state.is(State.playing))){
+            if(!net.client() && Core.input.keyTap(Binding.pause) && !(state.isCampaign() && state.afterGameOver) && !renderer.isCutscene() && !scene.hasDialog() && !scene.hasKeyboard() && !ui.restart.isShown() && (state.is(State.paused) || state.is(State.playing))){
                 state.set(state.isPaused() ? State.playing : State.paused);
+            }
+
+            if(state.isCampaign() && state.afterGameOver){
+                state.set(State.paused);
             }
 
             if(Core.input.keyTap(Binding.menu) && !ui.restart.isShown() && !ui.minimapfrag.shown()){

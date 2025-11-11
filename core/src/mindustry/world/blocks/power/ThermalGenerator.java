@@ -27,14 +27,20 @@ public class ThermalGenerator extends PowerGenerator{
     }
 
     @Override
+    public float getDisplayedPowerProduction(){
+        return powerProduction / displayEfficiencyScale;
+    }
+
+    @Override
     public void init(){
         if(outputLiquid != null){
             outputsLiquid = true;
             hasLiquids = true;
         }
+        emitLight = true;
         super.init();
         //proper light clipping
-        clipSize = Math.max(clipSize, 45f * size * 2f * 2f);
+        lightClipSize = Math.max(lightClipSize, 45f * size * 2f * 2f);
     }
 
     @Override
@@ -81,6 +87,17 @@ public class ThermalGenerator extends PowerGenerator{
                 liquids.add(outputLiquid.liquid, added);
                 dumpLiquid(outputLiquid.liquid);
             }
+        }
+
+        @Override
+        public void afterPickedUp(){
+            super.afterPickedUp();
+            sum = 0f;
+        }
+
+        @Override
+        public float totalProgress(){
+            return enabled && sum > 0 ? super.totalProgress() : 0f;
         }
 
         @Override

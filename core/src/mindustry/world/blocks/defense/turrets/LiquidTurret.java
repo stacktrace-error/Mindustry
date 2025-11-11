@@ -6,6 +6,7 @@ import mindustry.core.*;
 import mindustry.entities.*;
 import mindustry.entities.bullet.*;
 import mindustry.gen.*;
+import mindustry.logic.*;
 import mindustry.type.*;
 import mindustry.world.*;
 import mindustry.world.consumers.*;
@@ -73,6 +74,14 @@ public class LiquidTurret extends Turret{
         }
 
         @Override
+        public Object senseObject(LAccess sensor){
+            return switch(sensor){
+                case currentAmmoType -> liquids.current();
+                default -> super.senseObject(sensor);
+            };
+        }
+
+        @Override
         protected void findTarget(){
             if(extinguish && liquids.current().canExtinguish()){
                 int tx = World.toTile(x), ty = World.toTile(y);
@@ -85,7 +94,7 @@ public class LiquidTurret extends Turret{
                         var fire = Fires.get(x + tx, y + ty);
                         float dst = fire == null ? 0 : dst2(fire);
                         //do not extinguish fires on other team blocks
-                        if(other != null && fire != null && Fires.has(other.x, other.y) && dst <= range * range && (result == null || dst < mindst) && (other.build == null || other.team() == team)){
+                        if(other != null && fire != null && other.build != this && Fires.has(other.x, other.y) && dst <= range * range && (result == null || dst < mindst) && (other.build == null || other.team() == team)){
                             result = fire;
                             mindst = dst;
                         }

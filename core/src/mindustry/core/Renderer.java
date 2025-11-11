@@ -2,6 +2,7 @@ package mindustry.core;
 
 import arc.*;
 import arc.assets.loaders.TextureLoader.*;
+import arc.audio.*;
 import arc.files.*;
 import arc.graphics.*;
 import arc.graphics.Texture.*;
@@ -13,26 +14,20 @@ import arc.scene.ui.layout.*;
 import arc.struct.*;
 import arc.util.*;
 import mindustry.*;
-import mindustry.content.*;
 import mindustry.game.EventType.*;
 import mindustry.gen.*;
 import mindustry.graphics.*;
 import mindustry.graphics.g3d.*;
+import mindustry.maps.*;
 import mindustry.type.*;
-import mindustry.world.blocks.storage.*;
-import mindustry.world.blocks.storage.CoreBlock.*;
+import mindustry.world.blocks.*;
 
 import static arc.Core.*;
 import static mindustry.Vars.*;
 
 public class Renderer implements ApplicationListener{
     /** These are global variables, for headless access. Cached. */
-    public static float laserOpacity = 0.5f, bridgeOpacity = 0.75f;
-
-    private static final float cloudScaling = 1700f, cfinScl = -2f, cfinOffset = 0.3f, calphaFinOffset = 0.25f;
-    private static final float[] cloudAlphas = {0, 0.5f, 1f, 0.1f, 0, 0f};
-    private static final float cloudAlpha = 0.81f;
-    private static final Interp landInterp = Interp.pow3;
+    public static float laserOpacity = 0.5f, unitLaserOpacity = 1f, bridgeOpacity = 0.75f;
 
     public final BlockRenderer blocks = new BlockRenderer();
     public final FogRenderer fog = new FogRenderer();
@@ -45,31 +40,28 @@ public class Renderer implements ApplicationListener{
     public @Nullable Bloom bloom;
     public @Nullable FrameBuffer backgroundBuffer;
     public FrameBuffer effectBuffer = new FrameBuffer();
-    public boolean animateShields, drawWeather = true, drawStatus, enableEffects, drawDisplays = true;
+    public boolean animateShields, animateWater, drawWeather = true, drawStatus, enableEffects, drawDisplays = true, drawLight = true, pixelate = false;
     public float weatherAlpha;
-    /** minZoom = zooming out, maxZoom = zooming in */
+    /** minZoom = zooming out, maxZoom = zooming in, used by cutscenes */
     public float minZoom = 1.5f, maxZoom = 6f;
+
+    /** minZoom = zooming out, maxZoom = zooming in, used by actual gameplay zoom and regulated by settings **/
+    public float minZoomInGame = 0.5f, maxZoomInGame = 6f;
     public Seq<EnvRenderer> envRenderers = new Seq<>();
     public ObjectMap<String, Runnable> customBackgrounds = new ObjectMap<>();
     public TextureRegion[] bubbles = new TextureRegion[16], splashes = new TextureRegion[12];
     public TextureRegion[][] fluidFrames;
 
-    private @Nullable CoreBuild landCore;
-    private @Nullable CoreBlock launchCoreType;
+    //currently landing core, null if there are no cores or it has finished landing.
+    private @Nullable LaunchAnimator launchAnimator;
     private Color clearColor = new Color(0f, 0f, 0f, 1f);
-    private float
-    //seed for cloud visuals, 0-1
-    cloudSeed = 0f,
+    public float
     //target camera scale that is lerp-ed to
     targetscale = Scl.scl(4),
     //current actual camera scale
     camerascale = targetscale,
-    //minimum camera zoom value for landing/launching; constant TODO make larger?
-    minZoomScl = Scl.scl(0.02f),
     //starts at coreLandDuration, ends at 0. if positive, core is landing.
     landTime,
-    //timer for core landing particles
-    landPTimer,
     //intensity for screen shake
     shakeIntensity,
     //reduction rate of screen shake
@@ -79,6 +71,7 @@ public class Renderer implements ApplicationListener{
     //for landTime > 0: if true, core is currently *launching*, otherwise landing.
     private boolean launching;
     private Vec2 camShakeOffset = new Vec2();
+    private int glErrors;
 
     public Renderer(){
         camera = new Camera();
@@ -108,13 +101,9 @@ public class Renderer implements ApplicationListener{
     public void init(){
         planets = new PlanetRenderer();
 
-        if(settings.getBool("bloom", !ios)){
+        if(settings.getBool("bloom", true)){
             setupBloom();
         }
-
-        Events.run(Trigger.newGame, () -> {
-            landCore = player.bestCore();
-        });
 
         EnvRenderers.init();
         for(int i = 0; i < bubbles.length; i++) bubbles[i] = atlas.find("bubble-" + i);
@@ -162,6 +151,7 @@ public class Renderer implements ApplicationListener{
 
     @Override
     public void update(){
+        PerfCounter.render.begin();
         Color.white.set(1f, 1f, 1f, 1f);
 
         float baseTarget = targetscale;
@@ -173,33 +163,35 @@ public class Renderer implements ApplicationListener{
         float dest = Mathf.clamp(Mathf.round(baseTarget, 0.5f), minScale(), maxScale());
         camerascale = Mathf.lerpDelta(camerascale, dest, 0.1f);
         if(Mathf.equal(camerascale, dest, 0.001f)) camerascale = dest;
+        unitLaserOpacity = settings.getInt("unitlaseropacity") / 100f;
         laserOpacity = settings.getInt("lasersopacity") / 100f;
         bridgeOpacity = settings.getInt("bridgeopacity") / 100f;
         animateShields = settings.getBool("animatedshields");
+        animateWater = settings.getBool("animatedwater");
         drawStatus = settings.getBool("blockstatus");
         enableEffects = settings.getBool("effects");
         drawDisplays = !settings.getBool("hidedisplays");
+        maxZoomInGame = settings.getFloat("maxzoomingamemultiplier", 1) * maxZoom;
+        minZoomInGame = minZoom / settings.getFloat("minzoomingamemultiplier", 1);
+        drawLight = settings.getBool("drawlight", true);
+        pixelate = settings.getBool("pixelate");
 
+        //don't bother drawing landing animation if core is null
+        if(launchAnimator == null) landTime = 0f;
         if(landTime > 0){
-            if(!state.isPaused()){
-                CoreBuild build = landCore == null ? player.bestCore() : landCore;
-                build.updateLandParticles();
-            }
+            if(!state.isPaused()) launchAnimator.updateLaunch();
 
-            if(!state.isPaused()){
-                landTime -= Time.delta;
-            }
-            float fin = landTime / coreLandDuration;
-            if(!launching) fin = 1f - fin;
-            camerascale = landInterp.apply(minZoomScl, Scl.scl(4f), fin);
             weatherAlpha = 0f;
+            camerascale = launchAnimator.zoomLaunch();
 
-            //snap camera to cutscene core regardless of player input
-            if(landCore != null){
-                camera.position.set(landCore);
-            }
+            if(!state.isPaused()) landTime -= Time.delta;
         }else{
             weatherAlpha = Mathf.lerpDelta(weatherAlpha, 1f, 0.08f);
+        }
+
+        if(launchAnimator != null && landTime <= 0f){
+            launchAnimator.endLaunch();
+            launchAnimator = null;
         }
 
         camera.width = graphics.getWidth() / camerascale;
@@ -209,6 +201,8 @@ public class Renderer implements ApplicationListener{
             landTime = 0f;
             graphics.clear(Color.black);
         }else{
+            minimap.update();
+
             if(shakeTime > 0){
                 float intensity = shakeIntensity * (settings.getInt("screenshake", 4) / 4f) * 0.75f;
                 camShakeOffset.setToRandomDirection().scl(Mathf.random(intensity));
@@ -221,7 +215,7 @@ public class Renderer implements ApplicationListener{
                 shakeIntensity = 0f;
             }
 
-            if(pixelator.enabled()){
+            if(renderer.pixelate){
                 pixelator.drawPixelate();
             }else{
                 draw();
@@ -229,6 +223,26 @@ public class Renderer implements ApplicationListener{
 
             camera.position.sub(camShakeOffset);
         }
+
+        //glGetError can be expensive, so only check it periodically
+        if(glErrors < maxGlErrors && graphics.getFrameId() % 10 == 0){
+            int error = Gl.getError();
+            if(error != Gl.noError){
+                String message = switch(error){
+                    case Gl.invalidValue -> "invalid value";
+                    case Gl.invalidOperation -> "invalid operation";
+                    case Gl.invalidFramebufferOperation -> "invalid framebuffer operation";
+                    case Gl.invalidEnum -> "invalid enum";
+                    case Gl.outOfMemory -> "out of memory";
+                    default -> "unknown error (" + error + ")";
+                };
+
+                Log.err("[GL] Error: @", message);
+                glErrors ++;
+            }
+        }
+
+        PerfCounter.render.end();
     }
 
     public void updateAllDarkness(){
@@ -286,6 +300,7 @@ public class Renderer implements ApplicationListener{
 
     public void draw(){
         Events.fire(Trigger.preDraw);
+        MapPreviewLoader.checkPreviews();
 
         camera.update();
 
@@ -296,7 +311,7 @@ public class Renderer implements ApplicationListener{
         graphics.clear(clearColor);
         Draw.reset();
 
-        if(Core.settings.getBool("animatedwater") || animateShields){
+        if(animateWater || animateShields){
             effectBuffer.resize(graphics.getWidth(), graphics.getHeight());
         }
 
@@ -309,8 +324,9 @@ public class Renderer implements ApplicationListener{
         Draw.sort(true);
 
         Events.fire(Trigger.draw);
+        MapPreviewLoader.checkPreviews();
 
-        if(pixelator.enabled()){
+        if(renderer.pixelate){
             pixelator.register();
         }
 
@@ -320,7 +336,6 @@ public class Renderer implements ApplicationListener{
         Draw.draw(Layer.block - 0.09f, () -> {
             blocks.floor.beginDraw();
             blocks.floor.drawLayer(CacheLayer.walls);
-            blocks.floor.endDraw();
         });
 
         Draw.drawRange(Layer.blockBuilding, () -> Draw.shader(Shaders.blockbuild, true), Draw::shader);
@@ -332,7 +347,7 @@ public class Renderer implements ApplicationListener{
             }
         }
 
-        if(state.rules.lighting){
+        if(state.rules.lighting && drawLight){
             Draw.draw(Layer.light, lights::draw);
         }
 
@@ -342,11 +357,13 @@ public class Renderer implements ApplicationListener{
 
         if(bloom != null){
             bloom.resize(graphics.getWidth(), graphics.getHeight());
-            bloom.setBloomIntesity(settings.getInt("bloomintensity", 6) / 4f + 1f);
+            bloom.setBloomIntensity(settings.getInt("bloomintensity", 6) / 4f + 1f);
             bloom.blurPasses = settings.getInt("bloomblur", 1);
             Draw.draw(Layer.bullet - 0.02f, bloom::capture);
             Draw.draw(Layer.effect + 0.02f, bloom::render);
         }
+
+        control.input.drawCommanded();
 
         Draw.draw(Layer.plans, overlays::drawBottom);
 
@@ -363,14 +380,45 @@ public class Renderer implements ApplicationListener{
             });
         }
 
+        float scaleFactor = 4f / renderer.getDisplayScale();
+
+        //draw objective markers
+        state.rules.objectives.eachRunning(obj -> {
+            for(var marker : obj.markers){
+                if(marker.world){
+                    marker.draw(marker.autoscale ? scaleFactor : 1);
+                }
+            }
+        });
+
+        for(var marker : state.markers){
+            if(marker.world){
+                marker.draw(marker.autoscale ? scaleFactor : 1);
+            }
+        }
+
+        Draw.reset();
+
         Draw.draw(Layer.overlayUI, overlays::drawTop);
         if(state.rules.fog) Draw.draw(Layer.fogOfWar, fog::drawFog);
-        Draw.draw(Layer.space, this::drawLanding);
+        Draw.draw(Layer.space, () -> {
+            if(launchAnimator == null || landTime <= 0f) return;
+            launchAnimator.drawLaunch();
+        });
+        if(launchAnimator != null){
+            Draw.z(Layer.space);
+            launchAnimator.drawLaunchGlobalZ();
+            Draw.reset();
+        }
 
         Events.fire(Trigger.drawOver);
         blocks.drawBlocks();
 
         Groups.draw.draw(Drawc::draw);
+
+        if(drawDebugHitboxes){
+            DebugCollisionRenderer.draw();
+        }
 
         Draw.reset();
         Draw.flush();
@@ -453,61 +501,6 @@ public class Renderer implements ApplicationListener{
         if(state.rules.customBackgroundCallback != null && customBackgrounds.containsKey(state.rules.customBackgroundCallback)){
             customBackgrounds.get(state.rules.customBackgroundCallback).run();
         }
-
-    }
-
-    void drawLanding(){
-        CoreBuild build = landCore == null ? player.bestCore() : landCore;
-        var clouds = assets.get("sprites/clouds.png", Texture.class);
-        if(landTime > 0 && build != null){
-            float fout = landTime / coreLandDuration;
-            if(launching) fout = 1f - fout;
-            float fin = 1f - fout;
-            float scl = Scl.scl(4f) / camerascale;
-            float pfin = Interp.pow3Out.apply(fin), pf = Interp.pow2In.apply(fout);
-
-            //draw particles
-            Draw.color(Pal.lightTrail);
-            Angles.randLenVectors(1, pfin, 100, 800f * scl * pfin, (ax, ay, ffin, ffout) -> {
-                Lines.stroke(scl * ffin * pf * 3f);
-                Lines.lineAngle(build.x + ax, build.y + ay, Mathf.angle(ax, ay), (ffin * 20 + 1f) * scl);
-            });
-            Draw.color();
-
-            CoreBlock block = launching && launchCoreType != null ? launchCoreType : (CoreBlock)build.block;
-            block.drawLanding(build, build.x, build.y);
-
-            Draw.color();
-            Draw.mixcol(Color.white, Interp.pow5In.apply(fout));
-
-            //accent tint indicating that the core was just constructed
-            if(launching){
-                float f = Mathf.clamp(1f - fout * 12f);
-                if(f > 0.001f){
-                    Draw.mixcol(Pal.accent, f);
-                }
-            }
-
-            //draw clouds
-            if(state.rules.cloudColor.a > 0.0001f){
-                float scaling = cloudScaling;
-                float sscl = Math.max(1f + Mathf.clamp(fin + cfinOffset)* cfinScl, 0f) * camerascale;
-
-                Tmp.tr1.set(clouds);
-                Tmp.tr1.set(
-                (camera.position.x - camera.width/2f * sscl) / scaling,
-                (camera.position.y - camera.height/2f * sscl) / scaling,
-                (camera.position.x + camera.width/2f * sscl) / scaling,
-                (camera.position.y + camera.height/2f * sscl) / scaling);
-
-                Tmp.tr1.scroll(10f * cloudSeed, 10f * cloudSeed);
-
-                Draw.alpha(Mathf.sample(cloudAlphas, fin + calphaFinOffset) * cloudAlpha);
-                Draw.mixcol(state.rules.cloudColor, state.rules.cloudColor.a);
-                Draw.rect(Tmp.tr1, camera.position.x, camera.position.y, camera.width, camera.height);
-                Draw.reset();
-            }
-        }
     }
 
     public void scaleCamera(float amount){
@@ -524,11 +517,13 @@ public class Renderer implements ApplicationListener{
     }
 
     public float minScale(){
-        return Scl.scl(minZoom);
+        if(control.input.logicCutscene) return Scl.scl(minZoom);
+        return Scl.scl(minZoomInGame);
     }
 
     public float maxScale(){
-        return Mathf.round(Scl.scl(maxZoom));
+        if(control.input.logicCutscene) return Mathf.round(Scl.scl(maxZoom));
+        return Mathf.round(Scl.scl(maxZoomInGame));
     }
 
     public float getScale(){
@@ -544,41 +539,41 @@ public class Renderer implements ApplicationListener{
         return launching;
     }
 
-    public CoreBlock getLaunchCoreType(){
-        return launchCoreType;
-    }
-
     public float getLandTime(){
         return landTime;
     }
 
-    public float getLandPTimer(){
-        return landPTimer;
+    public float getLandTimeIn(){
+        if(launchAnimator == null) return 0f;
+        float fin = landTime / launchAnimator.launchDuration();
+        if(!launching) fin = 1f - fin;
+        return fin;
     }
 
-    public void setLandPTimer(float landPTimer){
-        this.landPTimer = landPTimer;
-    }
-
-    public void showLanding(){
+    public void showLanding(LaunchAnimator landCore){
+        this.launchAnimator = landCore;
         launching = false;
-        camerascale = minZoomScl;
-        landTime = coreLandDuration;
-        cloudSeed = Mathf.random(1f);
+        landTime = landCore.launchDuration();
+
+        landCore.beginLaunch(false);
+        camerascale = landCore.zoomLaunch();
     }
 
-    public void showLaunch(CoreBlock coreType){
-        Vars.ui.hudfrag.showLaunch();
-        Vars.control.input.config.hideConfig();
-        Vars.control.input.inv.hide();
-        launchCoreType = coreType;
+    public void showLaunch(LaunchAnimator landCore){
+        control.input.config.hideConfig();
+        control.input.planConfig.hide();
+        control.input.inv.hide();
+
+        this.launchAnimator = landCore;
         launching = true;
-        landCore = player.team().core();
-        cloudSeed = Mathf.random(1f);
-        landTime = coreLandDuration;
-        if(landCore != null){
-            Fx.coreLaunchConstruct.at(landCore.x, landCore.y, coreType.size);
-        }
+        landTime = landCore.launchDuration();
+
+        Music music = landCore.launchMusic();
+        music.stop();
+        music.play();
+        music.setVolume(settings.getInt("musicvol") / 100f);
+
+        landCore.beginLaunch(true);
     }
 
     public void takeMapScreenshot(){
@@ -620,7 +615,7 @@ public class Renderer implements ApplicationListener{
             Fi file = screenshotDirectory.child("screenshot-" + Time.millis() + ".png");
             PixmapIO.writePng(file, fullPixmap);
             fullPixmap.dispose();
-            app.post(() -> ui.showInfoFade(Core.bundle.format("screenshot", file.toString())));
+            app.post(() -> ui.showInfoFade(bundle.format("screenshot", file.toString())));
         });
     }
 

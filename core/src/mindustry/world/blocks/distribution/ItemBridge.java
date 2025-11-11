@@ -26,7 +26,7 @@ public class ItemBridge extends Block{
     public final int timerCheckMoved = timers ++;
 
     public int range;
-    public float transportTime = 2f;
+    public float transportTime;
     public @Load("@-end") TextureRegion endRegion;
     public @Load("@-bridge") TextureRegion bridgeRegion;
     public @Load("@-arrow") TextureRegion arrowRegion;
@@ -53,6 +53,7 @@ public class ItemBridge extends Block{
         unloadable = false;
         group = BlockGroup.transportation;
         noUpdateDisabled = true;
+        allowDiagonal = false;
         copyConfig = false;
         //disabled as to not be annoying
         allowConfigInventory = false;
@@ -62,6 +63,14 @@ public class ItemBridge extends Block{
         config(Point2.class, (ItemBridgeBuild tile, Point2 i) -> tile.link = Point2.pack(i.x + tile.tileX(), i.y + tile.tileY()));
         //integer is not
         config(Integer.class, (ItemBridgeBuild tile, Integer i) -> tile.link = i);
+    }
+
+    @Override
+    public void setStats() {
+        super.setStats();
+        if(transportTime != 0f){
+            stats.add(Stat.itemsMoved, 60f / transportTime, StatUnit.itemsSecond);
+        }
     }
 
     @Override
@@ -237,13 +246,15 @@ public class ItemBridge extends Block{
             Lines.stroke(2.5f);
             Lines.line(tx + Tmp.v2.x, ty + Tmp.v2.y, ox - Tmp.v2.x, oy - Tmp.v2.y);
 
+            float color = (linked ? Pal.place : Pal.accent).toFloatBits();
+
             //draw foreground colors
-            Draw.color(linked ? Pal.place : Pal.accent);
+            Draw.color(color);
             Lines.stroke(1f);
             Lines.line(tx + Tmp.v2.x, ty + Tmp.v2.y, ox - Tmp.v2.x, oy - Tmp.v2.y);
 
             Lines.square(ox, oy, 2f, 45f);
-            Draw.mixcol(Draw.getColor(), 1f);
+            Draw.mixcol(color);
             Draw.color();
             Draw.rect(arrowRegion, x, y, rel * 90);
             Draw.mixcol();
@@ -418,13 +429,22 @@ public class ItemBridge extends Block{
                 checkAccept(source, world.tile(link));
         }
 
-        protected boolean checkAccept(Building source, Tile other){
+        protected boolean checkAccept(Building source, Tile link){
             if(tile == null || linked(source)) return true;
 
-            if(linkValid(tile, other)){
-                int rel = relativeTo(other);
+            if(linkValid(tile, link)){
+                int rel = relativeTo(link);
                 var facing = Edges.getFacingEdge(source, this);
                 int rel2 = facing == null ? -1 : relativeTo(facing);
+
+                //this is a bug, but it is kept for compatibility, see: https://github.com/Anuken/Mindustry/issues/9257#issuecomment-1801998747
+                /*
+                for(int j = 0; j < incoming.size; j++){
+                    int v = incoming.items[j];
+                    if(relativeTo(Point2.x(v), Point2.y(v)) == rel2){
+                        return false;
+                    }
+                }*/
 
                 return rel != rel2;
             }

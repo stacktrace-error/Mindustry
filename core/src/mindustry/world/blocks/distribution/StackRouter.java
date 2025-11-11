@@ -44,7 +44,7 @@ public class StackRouter extends DuctRouter{
             if(unloading && current != null){
                 //unload when possible
                 var target = target();
-                while(target != null && items.total() > 0){
+                while(target != null && items.get(current) > 0){
                     target.handleItem(this, current);
                     items.remove(current, 1);
 
@@ -52,14 +52,19 @@ public class StackRouter extends DuctRouter{
                 }
 
                 //if out of items, unloading is over
-                if(items.total() == 0){
+                if(items.get(current) == 0){
                     current = null;
                     unloading = false;
                 }
             }
 
-            if(current == null && items.total() > 0){
+            if((current == null || items.get(current) == 0) && items.total() > 0){
                 current = items.first();
+            }
+
+            if(items.empty()){
+                unloading = false;
+                current = null;
             }
         }
 
@@ -80,7 +85,7 @@ public class StackRouter extends DuctRouter{
         @Override
         public boolean acceptItem(Building source, Item item){
             return !unloading && (current == null || item == current) && items.total() < itemCapacity &&
-                (Edges.getFacingEdge(source.tile(), tile).relativeTo(tile) == rotation);
+                (Edges.getFacingEdge(source.tile, tile).relativeTo(tile) == rotation);
         }
     }
 }

@@ -42,6 +42,11 @@ public class TechTree{
             node.objectives.addAll(objectives);
         }
 
+        //insert missing sector parent dependencies
+        if(context != null && context.content instanceof SectorPreset preset && !node.objectives.contains(o -> o instanceof SectorComplete sc && sc.preset == preset)){
+            node.objectives.insert(0, new SectorComplete(preset));
+        }
+
         TechNode prev = context;
         context = node;
         children.run();
@@ -99,6 +104,7 @@ public class TechTree{
         public TechNode(@Nullable TechNode parent, UnlockableContent content, ItemStack[] requirements){
             if(parent != null){
                 parent.children.add(this);
+                planet = parent.planet;
                 researchCostMultipliers = parent.researchCostMultipliers;
             }else if(researchCostMultipliers == null){
                 researchCostMultipliers = new ObjectFloatMap<>();
@@ -127,6 +133,7 @@ public class TechTree{
             });
 
             content.techNode = this;
+            content.techNodes.add(this);
             all.add(this);
         }
 
@@ -136,6 +143,16 @@ public class TechTree{
             for(var child : children){
                 child.each(consumer);
             }
+        }
+
+        /** Adds the specified database tab to all the content in this tree. */
+        public void addDatabaseTab(UnlockableContent tab){
+            each(node -> node.content.databaseTabs.add(tab));
+        }
+
+        /** Adds the specified planet to the shownPlanets of all the content in this tree. */
+        public void addPlanet(Planet planet){
+            each(node -> node.content.shownPlanets.add(planet));
         }
 
         public Drawable icon(){

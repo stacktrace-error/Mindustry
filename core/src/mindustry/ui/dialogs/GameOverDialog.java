@@ -39,6 +39,7 @@ public class GameOverDialog extends BaseDialog{
 
     public void show(Team winner){
         this.winner = winner;
+        state.afterGameOver = true;
         show();
         if(winner == player.team()){
             Events.fire(new WinEvent());
@@ -55,7 +56,7 @@ public class GameOverDialog extends BaseDialog{
 
         cont.table(t -> {
             if(state.rules.pvp && winner != null){
-                t.add(Core.bundle.format("gameover.pvp", winner.localized())).center().pad(6);
+                t.add(Core.bundle.format("gameover.pvp", winner.coloredName())).center().pad(6);
             }else{
                 t.add(state.isCampaign() ? Core.bundle.format("sector.lost", state.getSector().name()) : "@gameover").center().pad(6);
             }

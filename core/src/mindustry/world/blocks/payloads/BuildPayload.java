@@ -39,6 +39,11 @@ public class BuildPayload implements Payload{
     }
 
     @Override
+    public boolean contentEquals(Payload other){
+        return other instanceof BuildPayload bp && bp.block() == build.block;
+    }
+
+    @Override
     public UnlockableContent content(){
         return build.block;
     }
@@ -52,13 +57,19 @@ public class BuildPayload implements Payload{
     }
 
     @Override
+    public void destroyed(){
+        build.dead = true;
+        build.onDestroyed();
+    }
+
+    @Override
     public ItemStack[] requirements(){
         return build.block.requirements;
     }
 
     @Override
     public float buildTime(){
-        return build.block.buildCost;
+        return build.block.buildTime;
     }
 
     @Override
@@ -74,6 +85,11 @@ public class BuildPayload implements Payload{
     @Override
     public float size(){
         return build.block.size * tilesize;
+    }
+
+    @Override
+    public void remove(){
+        build.remove();
     }
 
     @Override
@@ -98,10 +114,13 @@ public class BuildPayload implements Payload{
     @Override
     public void draw(){
         float prevZ = Draw.z();
-        Draw.z(prevZ - 0.0001f);
+        Draw.z(prevZ - 0.001f);
         drawShadow(1f);
         Draw.z(prevZ);
-        Draw.zTransform(z -> z >= Layer.flyingUnitLow + 1f ? z : 0.0011f + Math.min(Mathf.clamp(z, prevZ - 0.001f, prevZ + 0.9f), Layer.flyingUnitLow - 1f));
+        Draw.zTransform(z ->
+            z >= Layer.flyingUnitLow + 1f ? z :
+            0.0011f + Math.min(Mathf.clamp((z - prevZ)/100f, -0.0009f, 0.9f) + prevZ, Layer.flyingUnitLow - 1f)
+        );
         build.tile = emptyTile;
         build.payloadDraw();
         Draw.zTransform();

@@ -28,6 +28,7 @@ import mindustry.game.*;
 import mindustry.gen.*;
 import mindustry.graphics.*;
 import mindustry.graphics.MultiPacker.*;
+import mindustry.logic.*;
 import mindustry.type.ammo.*;
 import mindustry.ui.*;
 import mindustry.world.*;
@@ -40,9 +41,10 @@ import mindustry.world.meta.*;
 import static arc.graphics.g2d.Draw.*;
 import static mindustry.Vars.*;
 
-public class UnitType extends UnlockableContent{
+public class UnitType extends UnlockableContent implements Senseable{
     public static final float shadowTX = -12, shadowTY = -13;
     private static final Vec2 legOffset = new Vec2();
+    private static final Seq<UnitStance> tmpStances = new Seq<>();
 
     /** Environmental flags that are *all* required for this unit to function. 0 = any environment */
     public int envRequired = 0;
@@ -55,6 +57,8 @@ public class UnitType extends UnlockableContent{
     public float speed = 1.1f,
     /** multiplier for speed when boosting */
     boostMultiplier = 1f,
+    /** how affected this unit is by terrain */
+    floorMultiplier = 1f,
     /** body rotation speed in degrees/t */
     rotateSpeed = 5f,
     /** mech base rotation speed in degrees/t*/
@@ -65,6 +69,8 @@ public class UnitType extends UnlockableContent{
     accel = 0.5f,
     /** size of one side of the hitbox square */
     hitSize = 6f,
+    /** shake on unit death */
+    deathShake = -1f,
     /** shake on each step for leg/mech units */
     stepShake = -1f,
     /** ripple / dust size for legged units */
@@ -89,6 +95,8 @@ public class UnitType extends UnlockableContent{
     buildRange = Vars.buildingRange,
     /** multiplier for damage this (flying) unit deals when crashing on enemy things */
     crashDamageMultiplier = 1f,
+    /** multiplier for health that this flying unit has for its wreck, based on its max health. */
+    wreckHealthMultiplier = 0.25f,
     /** a VERY ROUGH estimate of unit DPS; initialized in init() */
     dpsEstimate = -1,
     /** graphics clipping size; <0 to calculate automatically */
@@ -102,14 +110,18 @@ public class UnitType extends UnlockableContent{
 
     /** for ground units, the layer upon which this unit is drawn */
     groundLayer = Layer.groundUnit,
+    /** For units that fly, the layer upon which this unit is drawn. If no value is set, defaults to Layer.flyingUnitLow or Layer.flyingUnit depending on lowAltitude */
+    flyingLayer = -1,
     /** Payload capacity of this unit in world units^2 */
     payloadCapacity = 8,
     /** building speed multiplier; <0 to disable. */
     buildSpeed = -1f,
     /** Minimum distance from this unit that weapons can target. Prevents units from firing "inside" the unit. */
     aimDst = -1f,
-    /** Visual offset of build beam from front. */
+    /** Visual offset of the build beam from the front. */
     buildBeamOffset = 3.8f,
+    /** Visual offset of the mining beam from the front. Defaults to half the hitsize. */
+    mineBeamOffset = Float.NEGATIVE_INFINITY,
     /** WIP: Units of low priority will always be ignored in favor of those with higher priority, regardless of distance. */
     targetPriority = 0f,
     /** Elevation of shadow drawn under this (ground) unit. Visual only. */
@@ -128,6 +140,8 @@ public class UnitType extends UnlockableContent{
     lightRadius = -1f,
     /** light color opacity*/
     lightOpacity = 0.6f,
+    /** scale of soft shadow - its size is calculated based off of region size */
+    softShadowScl = 1f,
     /** fog view radius in tiles. <0 for automatic radius. */
     fogRadius = -1f,
 
@@ -140,8 +154,10 @@ public class UnitType extends UnlockableContent{
 
     /** if true, this unit counts as an enemy in the wave counter (usually false for support-only units) */
     public boolean isEnemy = true,
-    /** If true, the unit is always at elevation 1. */
+    /** if true, the unit is always at elevation 1 */
     flying = false,
+    /** whether this flying unit should wobble around */
+    wobble = true,
     /** whether this unit tries to attack air units */
     targetAir = true,
     /** whether this unit tries to attack ground units */
@@ -150,12 +166,22 @@ public class UnitType extends UnlockableContent{
     faceTarget = true,
     /** AI flag: if true, this flying unit circles around its target like a bomber */
     circleTarget = false,
+    /** AI flag: if true, this unit will drop bombs under itself even when it is not next to its 'real' target. used for carpet bombers */
+    autoDropBombs = false,
+    /** For the mobile version only: If false, this unit will not auto-target buildings to attach when a player controls it. */
+    targetBuildingsMobile = true,
     /** if true, this unit can boost into the air if a player/processors controls it*/
     canBoost = false,
+    /** if true, this unit will always boost when using builder AI */
+    boostWhenBuilding = true,
+    /** if true, this unit will always boost when using miner AI */
+    boostWhenMining = true,
     /** if false, logic processors cannot control this unit */
     logicControllable = true,
     /** if false, players cannot control this unit */
     playerControllable = true,
+    /** If true, the unit can be selected with the global selection hotkey (shift+g). */
+    controlSelectGlobal = true,
     /** if false, this unit cannot be moved into payloads */
     allowedInPayloads = true,
     /** if false, this unit cannot be hit by bullets or explosions*/
@@ -188,7 +214,7 @@ public class UnitType extends UnlockableContent{
     allowLegStep = false,
     /** for legged units, setting this to false forces it to be on the ground physics layer. */
     legPhysicsLayer = true,
-    /** if true, this unit cannot drown, and will not be affected by the floor under it. */
+    /** if true, this unit will not be affected by the floor under it. */
     hovering = false,
     /** if true, this unit can move in any direction regardless of rotation. if false, this unit can only move in the direction it is facing. */
     omniMovement = true,
@@ -208,12 +234,16 @@ public class UnitType extends UnlockableContent{
     hidden = false,
     /** if true, this unit is for internal use only and does not have a sprite generated. */
     internal = false,
+    /** For certain units, generating sprites is still necessary, despite being internal. */
+    internalGenerateSprites = false,
     /** If false, this unit is not pushed away from map edges. */
     bounded = true,
     /** if true, this unit is detected as naval - do NOT assign this manually! Initialized in init() */
     naval = false,
     /** if false, RTS AI controlled units do not automatically attack things while moving. This is automatically assigned. */
     autoFindTarget = true,
+    /** If false, 'under' blocks like conveyors are not targeted. */
+    targetUnderBlocks = true,
     /** if true, this unit will always shoot while moving regardless of slowdown */
     alwaysShootWhenMoving = false,
 
@@ -221,10 +251,14 @@ public class UnitType extends UnlockableContent{
     hoverable = true,
     /** if true, this modded unit always has a -outline region generated for its base. Normally, outlines are ignored if there are no top = false weapons. */
     alwaysCreateOutline = false,
+    /** for vanilla content only - if false, skips the full icon generation step. */
+    generateFullIcon = true,
     /** if true, this unit has a square shadow. */
     squareShape = false,
     /** if true, this unit will draw its building beam towards blocks. */
     drawBuildBeam = true,
+    /** if true, this unit will draw its mining beam towards blocks */
+    drawMineBeam = true,
     /** if false, the team indicator/cell is not drawn. */
     drawCell = true,
     /** if false, carried items are not drawn. */
@@ -233,6 +267,8 @@ public class UnitType extends UnlockableContent{
     drawShields = true,
     /** if false, the unit body is not drawn. */
     drawBody = true,
+    /** if false, the soft shadow is not drawn. */
+    drawSoftShadow = true,
     /** if false, the unit is not drawn on the minimap. */
     drawMinimap = true;
 
@@ -254,6 +290,8 @@ public class UnitType extends UnlockableContent{
     public Color healColor = Pal.heal;
     /** Color of light that this unit produces when lighting is enabled in the map. */
     public Color lightColor = Pal.powerLight;
+    /** override for unit shield colour. */
+    public @Nullable Color shieldColor;
     /** sound played when this unit explodes (*not* when it is shot down) */
     public Sound deathSound = Sounds.bang;
     /** sound played on loop when this unit is around. */
@@ -283,18 +321,26 @@ public class UnitType extends UnlockableContent{
     /** override for engine trail color */
     public @Nullable Color trailColor;
 
+    /** Cost type ID for flow field/enemy AI pathfinding. */
+    public int flowfieldPathType = -1;
     /** Function used for calculating cost of moving with ControlPathfinder. Does not affect "normal" flow field pathfinding. */
     public @Nullable PathCost pathCost;
+    /** ID for path cost, to be used in the control path finder. This is the value that actually matters; do not assign manually. Set in init(). */
+    public int pathCostId;
     /** A sample of the unit that this type creates. Do not modify! */
     public @Nullable Unit sample;
 
     /** Flags to target based on priority. Null indicates that the closest target should be found. The closest enemy core is used as a fallback. */
     public BlockFlag[] targetFlags = {null};
 
+    /** A value of false is used to hide command changing UI in unit factories. */
+    public boolean allowChangeCommands = true;
     /** Commands available to this unit through RTS controls. An empty array means commands will be assigned based on unit capabilities in init(). */
-    public UnitCommand[] commands = {};
+    public Seq<UnitCommand> commands = new Seq<>();
     /** Command to assign to this unit upon creation. Null indicates the first command in the array. */
     public @Nullable UnitCommand defaultCommand;
+    /** Stances this unit can have.  An empty array means stances will be assigned based on unit capabilities in init(). */
+    public Seq<UnitStance> stances = new Seq<>();
 
     /** color for outline generated around sprites */
     public Color outlineColor = Pal.darkerMetal;
@@ -363,12 +409,18 @@ public class UnitType extends UnlockableContent{
     /** how straight the leg outward angles are (0 = circular, 1 = horizontal line) */
     legStraightness = 0f;
 
+    /** If true, the base (further away) leg region is drawn under instead of over. */
+    public boolean legBaseUnder = false;
     /** If true, legs are locked to the base of the unit instead of being on an implicit rotating "mount". */
     public boolean lockLegBase = false;
     /** If true, legs always try to move around even when the unit is not moving (leads to more natural behavior) */
     public boolean legContinuousMove;
     /** TODO neither of these appear to do much */
     public boolean flipBackLegs = true, flipLegSide = false;
+    /** Whether to emit a splashing noise in water. */
+    public boolean emitWalkSound = true;
+    /** Whether to emit a splashing effect in water (fasle implies emitWalkSound false). */
+    public boolean emitWalkEffect = true;
 
     //MECH UNITS
 
@@ -394,6 +446,14 @@ public class UnitType extends UnlockableContent{
 
     /** number of independent segments */
     public int segments = 0;
+    /** TODO wave support - for multi-unit segmented units, this is the number of independent units that are spawned */
+    public int segmentUnits = 1;
+    /** unit spawned in segments; if null, the same unit is used */
+    public @Nullable UnitType segmentUnit;
+    /** unit spawned at the end; if null, the segment unit is used */
+    public @Nullable UnitType segmentEndUnit;
+    /** true - parent segments are on higher layers; false - parent segments are on lower layers than head*/
+    public boolean segmentLayerOrder = true;
     /** magnitude of sine offset between segments */
     public float segmentMag = 2f,
     /** scale of sine offset between segments */
@@ -404,6 +464,10 @@ public class UnitType extends UnlockableContent{
     segmentRotSpeed = 1f,
     /** maximum difference between segment angles */
     segmentMaxRot = 30f,
+    /** spacing between separate unit segments (only used for multi-unit worms) */
+    segmentSpacing = -1f,
+    /** rotation between segments is clamped to this range */
+    segmentRotationRange = 80f,
     /** speed multiplier this unit will have when crawlSlowdownFrac is met. */
     crawlSlowdown = 0.5f,
     /** damage dealt to blocks under this tank/crawler every frame. */
@@ -422,9 +486,12 @@ public class UnitType extends UnlockableContent{
 
     //(undocumented, you shouldn't need to use these, and if you do just check how they're drawn and copy that)
     public TextureRegion baseRegion, legRegion, region, previewRegion, shadowRegion, cellRegion, itemCircleRegion,
-        softShadowRegion, jointRegion, footRegion, legBaseRegion, baseJointRegion, outlineRegion, treadRegion;
-    public TextureRegion[] wreckRegions, segmentRegions, segmentOutlineRegions;
+        softShadowRegion, jointRegion, footRegion, legBaseRegion, baseJointRegion, outlineRegion, treadRegion,
+        mineLaserRegion, mineLaserEndRegion;
+    public TextureRegion[] wreckRegions, segmentRegions, segmentCellRegions, segmentOutlineRegions;
     public TextureRegion[][] treadRegions;
+
+    //INTERNAL REQUIREMENTS
 
     protected float buildTime = -1f;
     protected @Nullable ItemStack[] totalRequirements, cachedRequirements, firstRequirements;
@@ -432,6 +499,8 @@ public class UnitType extends UnlockableContent{
     public UnitType(String name){
         super(name);
 
+        // Try to immediately resolve the Unit constructor based on EntityMapping entry, if it is set.
+        // This is the default Vanilla behavior - it won't work properly for mods (see comment in `init()`)!
         constructor = EntityMapping.map(this.name);
         selectionSize = 30f;
     }
@@ -444,6 +513,12 @@ public class UnitType extends UnlockableContent{
         Unit unit = constructor.get();
         unit.team = team;
         unit.setType(this);
+        if(unit.controller() instanceof CommandAI command && defaultCommand != null){
+            command.command = defaultCommand;
+        }
+        for(var ability : unit.abilities){
+            ability.created(unit);
+        }
         unit.ammo = ammoCapacity; //fill up on ammo upon creation
         unit.elevation = flying ? 1f : 0;
         unit.heal();
@@ -453,11 +528,47 @@ public class UnitType extends UnlockableContent{
         return unit;
     }
 
-    public Unit spawn(Team team, float x, float y){
+    /** @param cons Callback that gets called with every unit that is spawned. This is used for multi-unit segmented units. */
+    public Unit spawn(Team team, float x, float y, float rotation, @Nullable Cons<Unit> cons){
+        float offsetX = 0f, offsetY = 0f;
+        if(segmentUnits > 1 && sample instanceof Segmentc){
+            Tmp.v1.trns(rotation, segmentSpacing * segmentUnits / 2f);
+            offsetX = Tmp.v1.x;
+            offsetY = Tmp.v1.y;
+        }
+
         Unit out = create(team);
-        out.set(x, y);
+        out.rotation = rotation;
+        out.set(x + offsetX, y + offsetY);
         out.add();
+        if(cons != null) cons.get(out);
+
+        if(segmentUnits > 1 && out instanceof Segmentc){
+            Unit last = out;
+            UnitType segType = segmentUnit == null ? this : segmentUnit;
+            for(int i = 0; i < segmentUnits; i++){
+                UnitType type = i == segmentUnits - 1 && segmentEndUnit != null ? segmentEndUnit : segType;
+
+                Unit next = type.create(team);
+                Tmp.v1.trns(rotation, segmentSpacing * (i + 1));
+                next.set(x - Tmp.v1.x + offsetX, y - Tmp.v1.y + offsetY);
+                next.rotation = rotation;
+                next.add();
+                ((Segmentc)last).addChild(next);
+
+                if(cons != null) cons.get(next);
+                last = next;
+            }
+        }
         return out;
+    }
+
+    public Unit spawn(Team team, float x, float y, float rotation){
+        return spawn(team, x, y, rotation, null);
+    }
+
+    public Unit spawn(Team team, float x, float y){
+        return spawn(team, x, y, 0f);
     }
 
     public Unit spawn(float x, float y){
@@ -484,8 +595,41 @@ public class UnitType extends UnlockableContent{
         return targetable || (vulnerableWithPayloads && unit instanceof Payloadc p && p.hasPayload());
     }
 
+    public boolean killable(Unit unit){
+        return killable;
+    }
+
     public boolean hittable(Unit unit){
         return hittable || (vulnerableWithPayloads && unit instanceof Payloadc p && p.hasPayload());
+    }
+
+    /** Adds all available unit stances based on the unit's current state. This can change based on the command of the unit. */
+    public void getUnitStances(Unit unit, Seq<UnitStance> out){
+        //return mining stances based on present items
+        if(unit.controller() instanceof CommandAI ai && ai.currentCommand() == UnitCommand.mineCommand){
+            out.add(UnitStance.mineAuto);
+            for(Item item : indexer.getAllPresentOres()){
+                if(unit.canMine(item) && ((mineFloor && indexer.hasOre(item)) || (mineWalls && indexer.hasWallOre(item)))){
+                    var itemStance = ItemUnitStance.getByItem(item);
+                    if(itemStance != null){
+                        out.add(itemStance);
+                    }
+                }
+            }
+        }else{
+            out.addAll(stances);
+        }
+    }
+
+    public boolean allowStance(Unit unit, UnitStance stance){
+        if(stance == UnitStance.stop) return true;
+        tmpStances.clear();
+        getUnitStances(unit, tmpStances);
+        return tmpStances.contains(stance);
+    }
+
+    public boolean allowCommand(Unit unit, UnitCommand command){
+        return commands.contains(command);
     }
 
     public void update(Unit unit){
@@ -504,7 +648,7 @@ public class UnitType extends UnlockableContent{
         table.table(t -> {
             t.left();
             t.add(new Image(uiIcon)).size(iconMed).scaling(Scaling.fit);
-            t.labelWrap(localizedName).left().width(190f).padLeft(5);
+            t.labelWrap(unit.isPlayer() ? unit.getPlayer().coloredName() + "\n[lightgray]" + localizedName : localizedName).left().width(190f).padLeft(5);
         }).growX().left();
         table.row();
 
@@ -525,7 +669,7 @@ public class UnitType extends UnlockableContent{
             }
 
             if(payloadCapacity > 0 && unit instanceof Payloadc payload){
-                bars.add(new Bar("stat.payloadcapacity", Pal.items, () -> payload.payloadUsed() / unit.type().payloadCapacity));
+                bars.add(new Bar("stat.payloadcapacity", Pal.items, () -> payload.payloadUsed() / payloadCapacity));
                 bars.row();
 
                 var count = new float[]{-1};
@@ -564,6 +708,7 @@ public class UnitType extends UnlockableContent{
         return (envEnabled & env) != 0 && (envDisabled & env) == 0 && (envRequired == 0 || (envRequired & env) == envRequired);
     }
 
+    @Override
     public boolean isBanned(){
         return state.rules.isBanned(this);
     }
@@ -599,16 +744,22 @@ public class UnitType extends UnlockableContent{
         stats.add(Stat.speed, speed * 60f / tilesize, StatUnit.tilesSecond);
         stats.add(Stat.size, StatValues.squared(hitSize / tilesize, StatUnit.blocks));
         stats.add(Stat.itemCapacity, itemCapacity);
-        stats.add(Stat.range, (int)(maxRange / tilesize), StatUnit.blocks);
+        stats.add(Stat.range, Strings.autoFixed(maxRange / tilesize, 1), StatUnit.blocks);
+
+        if(crushDamage > 0){
+            stats.add(Stat.crushDamage, crushDamage * 60f * 5f, StatUnit.perSecond);
+        }
+
+        if(legSplashDamage > 0 && legSplashRange > 0){
+            stats.add(Stat.legSplashDamage, legSplashDamage, StatUnit.perLeg);
+            stats.add(Stat.legSplashRange, Strings.autoFixed(legSplashRange / tilesize, 1), StatUnit.blocks);
+        }
+
+        stats.add(Stat.targetsAir, targetAir);
+        stats.add(Stat.targetsGround, targetGround);
 
         if(abilities.any()){
-            var unique = new ObjectSet<String>();
-
-            for(Ability a : abilities){
-                if(a.display && unique.add(a.localized())){
-                    stats.add(Stat.abilities, a.localized());
-                }
-            }
+            stats.add(Stat.abilities, StatValues.abilities(abilities));
         }
 
         stats.add(Stat.flying, flying);
@@ -643,38 +794,84 @@ public class UnitType extends UnlockableContent{
         }
 
         if(immunities.size > 0){
-            var imm = immunities.toSeq().sort();
-            //it's redundant to list wet for naval units
-            if(naval){
-                imm.remove(StatusEffects.wet);
-            }
-            stats.add(Stat.immunities, StatValues.statusEffects(imm));
+            stats.add(Stat.immunities, StatValues.statusEffects(immunities.toSeq().sort()));
         }
     }
 
-    //never actually called; it turns out certain mods have custom weapons that do not need bullets.
-    protected void validateWeapons(){
-        for(int i = 0; i < weapons.size; i++){
-            var wep = weapons.get(i);
-            if(wep.bullet == Bullets.placeholder || wep.bullet == null){
-                throw new RuntimeException("Unit: " + name + ": weapon #" + i + " ('" + wep.name + "') does not have a bullet defined. Make sure you have a bullet: (JSON) or `bullet = ` field in your unit definition.");
-            }
+    protected void checkEntityMapping(Unit example){
+        if(constructor == null) throw new IllegalArgumentException(Strings.format("""
+            No constructor set up for unit '@': Assign `constructor = [your unit constructor]`. Vanilla defaults are:
+              "flying": UnitEntity::create
+              "mech": MechUnit::create
+              "legs": LegsUnit::create
+              "naval": UnitWaterMove::create
+              "payload": PayloadUnit::create
+              "missile": TimedKillUnit::create
+              "tank": TankUnit::create
+              "hover": ElevationMoveUnit::create
+              "tether": BuildingTetherPayloadUnit::create
+              "crawl": CrawlUnit::create
+            """, name));
+
+        // Often modders improperly only sets `constructor = ...` without mapping. Try to mitigate that.
+        // In most cases, if the constructor is a Vanilla class, things should work just fine.
+        if(EntityMapping.map(name) == null) EntityMapping.nameMap.put(name, constructor);
+
+        // Sanity checks; this is an EXTREMELY COMMON pitfalls Java modders fall into.
+        int classId = example.classId();
+        if(
+            // Check if `classId()` even points to a valid constructor...
+        EntityMapping.map(classId) == null ||
+        // ...or if the class doesn't register itself and uses the ID of its base class.
+        classId != ((Entityc)EntityMapping.map(classId).get()).classId()
+        ){
+            String type = example.getClass().getSimpleName();
+            throw new IllegalArgumentException(Strings.format("""
+                Invalid class ID for `@` detected (found: @). Potential fixes:
+                - Register with `EntityMapping.register("some-unique-name", @::new)` to get an ID, and store it somewhere.
+                - Override `@#classId()` to return that ID.
+                """, type, classId, type, type));
         }
+    }
+
+    void initPathType(){
+        if(flowfieldPathType == -1){
+            flowfieldPathType =
+            naval ? Pathfinder.costNaval :
+            allowLegStep ? Pathfinder.costLegs :
+            flying ? Pathfinder.costNone :
+            hovering ? Pathfinder.costHover :
+            Pathfinder.costGround;
+        }
+
+        if(pathCost == null){
+            pathCost =
+            naval ? ControlPathfinder.costNaval :
+            allowLegStep ? ControlPathfinder.costLegs :
+            hovering ? ControlPathfinder.costHover :
+            ControlPathfinder.costGround;
+        }
+
+        pathCostId = ControlPathfinder.costTypes.indexOf(pathCost);
+        if(pathCostId == -1) pathCostId = 0;
     }
 
     @CallSuper
     @Override
     public void init(){
-        if(constructor == null) throw new IllegalArgumentException("no constructor set up for unit '" + name + "'");
+        super.init();
 
         Unit example = constructor.get();
 
-        allowLegStep = example instanceof Legsc;
+        checkEntityMapping(example);
+
+        allowLegStep = example instanceof Legsc || example instanceof Crawlc;
 
         //water preset
-        if(example instanceof WaterMovec){
+        if(example instanceof WaterMovec || example instanceof WaterCrawlc){
             naval = true;
             canDrown = false;
+            emitWalkSound = false;
             omniMovement = false;
             immunities.add(StatusEffects.wet);
             if(shadowElevation < 0f){
@@ -682,13 +879,7 @@ public class UnitType extends UnlockableContent{
             }
         }
 
-        if(pathCost == null){
-            pathCost =
-                example instanceof WaterMovec ? ControlPathfinder.costNaval :
-                allowLegStep ? ControlPathfinder.costLegs :
-                hovering ? ControlPathfinder.costHover :
-                ControlPathfinder.costGround;
-        }
+        initPathType();
 
         if(flying){
             envEnabled |= Env.space;
@@ -699,10 +890,13 @@ public class UnitType extends UnlockableContent{
         }
 
         //if a status effects slows a unit when firing, don't shoot while moving.
-        autoFindTarget = !weapons.contains(w -> w.shootStatus.speedMultiplier < 0.99f) || alwaysShootWhenMoving;
+        if(autoFindTarget){
+            autoFindTarget = !weapons.contains(w -> w.shootStatus.speedMultiplier < 0.99f) || alwaysShootWhenMoving;
+        }
 
+        if(flyingLayer < 0) flyingLayer = lowAltitude ? Layer.flyingUnitLow : Layer.flyingUnit;
         clipSize = Math.max(clipSize, lightRadius * 1.1f);
-        singleTarget = weapons.size <= 1 && !forceMultiTarget;
+        singleTarget |= weapons.size <= 1 && !forceMultiTarget;
 
         if(itemCapacity < 0){
             itemCapacity = Math.max(Mathf.round((int)(hitSize * 4f), 10), 10);
@@ -711,13 +905,11 @@ public class UnitType extends UnlockableContent{
         //assume slight range margin
         float margin = 4f;
 
-        boolean skipWeapons = !weapons.contains(w -> !w.useAttackRange);
-
         //set up default range
         if(range < 0){
             range = Float.MAX_VALUE;
             for(Weapon weapon : weapons){
-                if(!weapon.useAttackRange && skipWeapons) continue;
+                if(!weapon.useAttackRange) continue;
 
                 range = Math.min(range, weapon.range() - margin);
                 maxRange = Math.max(maxRange, weapon.range() - margin);
@@ -728,7 +920,7 @@ public class UnitType extends UnlockableContent{
             maxRange = Math.max(0f, range);
 
             for(Weapon weapon : weapons){
-                if(!weapon.useAttackRange && skipWeapons) continue;
+                if(!weapon.useAttackRange) continue;
 
                 maxRange = Math.max(maxRange, weapon.range() - margin);
             }
@@ -739,12 +931,17 @@ public class UnitType extends UnlockableContent{
             fogRadius = Math.max(58f * 3f, hitSize * 2f) / 8f;
         }
 
-        if(weapons.isEmpty()){
-            range = maxRange = mineRange;
+        if(!weapons.contains(w -> w.useAttackRange)){
+            if(range < 0 || range == Float.MAX_VALUE) range = mineRange;
+            if(maxRange < 0 || maxRange == Float.MAX_VALUE) maxRange = mineRange;
         }
 
         if(mechStride < 0){
             mechStride = 4f + (hitSize -8f)/2.1f;
+        }
+
+        if(segmentSpacing < 0){
+            segmentSpacing = hitSize;
         }
 
         if(aimDst < 0){
@@ -770,6 +967,8 @@ public class UnitType extends UnlockableContent{
                 }
             }).layer(Layer.debris);
         }
+
+        if(mineBeamOffset == Float.NEGATIVE_INFINITY) mineBeamOffset = hitSize / 2;
 
         for(Ability ab : abilities){
             ab.init(this);
@@ -806,31 +1005,53 @@ public class UnitType extends UnlockableContent{
         canAttack = weapons.contains(w -> !w.noAttack);
 
         //assign default commands.
-        if(commands.length == 0){
-            Seq<UnitCommand> cmds = new Seq<>(UnitCommand.class);
+        if(commands.size == 0){
 
-            cmds.add(UnitCommand.moveCommand);
+            commands.add(UnitCommand.moveCommand, UnitCommand.enterPayloadCommand);
 
             if(canBoost){
-                cmds.add(UnitCommand.boostCommand);
+                commands.add(UnitCommand.boostCommand);
+
+                if(buildSpeed > 0f){
+                    commands.add(UnitCommand.rebuildCommand, UnitCommand.assistCommand);
+                }
+                if(mineTier > 0){
+                    commands.add(UnitCommand.mineCommand);
+                }
             }
 
             //healing, mining and building is only supported for flying units; pathfinding to ambiguously reachable locations is hard.
             if(flying){
                 if(canHeal){
-                    cmds.add(UnitCommand.repairCommand);
+                    commands.add(UnitCommand.repairCommand);
                 }
 
                 if(buildSpeed > 0){
-                    cmds.add(UnitCommand.rebuildCommand, UnitCommand.assistCommand);
+                    commands.add(UnitCommand.rebuildCommand, UnitCommand.assistCommand);
                 }
 
                 if(mineTier > 0){
-                    cmds.add(UnitCommand.mineCommand);
+                    commands.add(UnitCommand.mineCommand);
+                }
+                if(example instanceof Payloadc){
+                    commands.addAll(UnitCommand.loadUnitsCommand, UnitCommand.loadBlocksCommand, UnitCommand.unloadPayloadCommand, UnitCommand.loopPayloadCommand);
                 }
             }
+        }
 
-            commands = cmds.toArray();
+        if(defaultCommand == null && commands.size > 0){
+            defaultCommand = commands.first();
+        }
+
+        if(stances.size == 0){
+            if(canAttack){
+                stances.addAll(UnitStance.stop, UnitStance.holdFire, UnitStance.pursueTarget, UnitStance.patrol);
+                if(!flying){
+                    stances.add(UnitStance.ram);
+                }
+            }else{
+                stances.addAll(UnitStance.stop, UnitStance.patrol);
+            }
         }
 
         //dynamically create ammo capacity based on firing rate
@@ -856,7 +1077,7 @@ public class UnitType extends UnlockableContent{
             //suicide enemy
             if(weapons.contains(w -> w.bullet.killShooter)){
                 //scale down DPS to be insignificant
-                dpsEstimate /= 25f;
+                dpsEstimate /= 15f;
             }
         }
 
@@ -892,6 +1113,9 @@ public class UnitType extends UnlockableContent{
         legBaseRegion = Core.atlas.find(name + "-leg-base", name + "-leg");
         baseRegion = Core.atlas.find(name + "-base");
         cellRegion = Core.atlas.find(name + "-cell", Core.atlas.find("power-cell"));
+
+        mineLaserRegion = Core.atlas.find("minelaser");
+        mineLaserEndRegion = Core.atlas.find("minelaser-end");
         //when linear filtering is on, it's acceptable to use the relatively low-res 'particle' region
         softShadowRegion =
             squareShape ? Core.atlas.find("square-shadow") :
@@ -909,9 +1133,11 @@ public class UnitType extends UnlockableContent{
 
         segmentRegions = new TextureRegion[segments];
         segmentOutlineRegions = new TextureRegion[segments];
+        segmentCellRegions = new TextureRegion[segments];
         for(int i = 0; i < segments; i++){
             segmentRegions[i] = Core.atlas.find(name + "-segment" + i);
             segmentOutlineRegions[i] = Core.atlas.find(name + "-segment-outline" + i);
+            segmentCellRegions[i] = Core.atlas.find(name + "-segment-cell" + i);
         }
 
         clipSize = Math.max(region.width * 2f, clipSize);
@@ -936,19 +1162,22 @@ public class UnitType extends UnlockableContent{
     public void createIcons(MultiPacker packer){
         super.createIcons(packer);
 
+        if(constructor == null) throw new IllegalArgumentException("No constructor set up for unit '" + name + "', add this argument to your units field: `constructor = UnitEntity::create`");
+
         sample = constructor.get();
 
         var toOutline = new Seq<TextureRegion>();
         getRegionsToOutline(toOutline);
 
         for(var region : toOutline){
-            if(region instanceof AtlasRegion atlas){
+            if(region instanceof AtlasRegion atlas && !Core.atlas.has(atlas.name + "-outline")){
                 String regionName = atlas.name;
                 Pixmap outlined = Pixmaps.outline(Core.atlas.getPixmap(region), outlineColor, outlineRadius);
 
                 Drawf.checkBleed(outlined);
 
                 packer.add(PageType.main, regionName + "-outline", outlined);
+                outlined.dispose();
             }
         }
 
@@ -1001,9 +1230,23 @@ public class UnitType extends UnlockableContent{
                     }
 
                     packer.add(PageType.main, name + "-treads" + r + "-" + i, frame);
+                    frame.dispose();
                 }
+                slice.dispose();
             }
         }
+    }
+
+    @Override
+    public void afterPatch(){
+        super.afterPatch();
+        totalRequirements = cachedRequirements = firstRequirements = null;
+
+        //this will technically reset any assigned values, but in vanilla, they're not reassigned anyway
+        flowfieldPathType = -1;
+        pathCost = null;
+        pathCostId = -1;
+        initPathType();
     }
 
     /** @return the time required to build this unit, as a value that takes into account reconstructors */
@@ -1123,6 +1366,25 @@ public class UnitType extends UnlockableContent{
     }
 
     @Override
+    public double sense(LAccess sensor){
+        return switch(sensor){
+            case health, maxHealth -> health;
+            case size -> hitSize / tilesize;
+            case itemCapacity -> itemCapacity;
+            case speed -> speed * 60f / tilesize;
+            case payloadCapacity -> sample instanceof Payloadc ? payloadCapacity / tilePayload : 0f;
+            case id -> getLogicId();
+            default -> Double.NaN;
+        };
+    }
+
+    @Override
+    public Object senseObject(LAccess sensor){
+        if(sensor == LAccess.name) return name;
+        return noSensed;
+    }
+
+    @Override
     public ContentType getContentType(){
         return ContentType.unit;
     }
@@ -1143,16 +1405,27 @@ public class UnitType extends UnlockableContent{
     //region drawing
 
     public void draw(Unit unit){
+        float scl = xscl;
         if(unit.inFogTo(Vars.player.team())) return;
+
+        if(buildSpeed > 0f){
+            unit.drawBuilding();
+        }
+
+        if(unit.mining()){
+            drawMining(unit);
+        }
 
         boolean isPayload = !unit.isAdded();
 
-        Mechc mech = unit instanceof Mechc ? (Mechc)unit : null;
-        float z = isPayload ? Draw.z() : unit.elevation > 0.5f ? (lowAltitude ? Layer.flyingUnitLow : Layer.flyingUnit) : groundLayer + Mathf.clamp(hitSize / 4000f, 0, 0.01f);
-
-        if(unit.controller().isBeingControlled(player.unit())){
-            drawControl(unit);
-        }
+        Mechc mech = unit instanceof Mechc m ? m : null;
+        Segmentc seg = unit instanceof Segmentc c ? c : null;
+        float z =
+            isPayload ? Draw.z() :
+            //dead flying units are assumed to be falling, and to prevent weird clipping issue with the dark "fog", they always draw above it
+            unit.elevation > 0.5f || (flying && unit.dead) ? (flyingLayer) :
+            seg != null ? groundLayer + seg.segmentIndex() / 4000f * Mathf.sign(segmentLayerOrder) + (!segmentLayerOrder ? 0.01f : 0f) :
+            groundLayer + Mathf.clamp(hitSize / 4000f, 0, 0.01f);
 
         if(!isPayload && (unit.isFlying() || shadowElevation > 0)){
             Draw.z(Math.min(Layer.darkness, z - 1f));
@@ -1187,7 +1460,7 @@ public class UnitType extends UnlockableContent{
             drawPayload((Unit & Payloadc)unit);
         }
 
-        drawSoftShadow(unit);
+        if(drawSoftShadow) drawSoftShadow(unit);
 
         Draw.z(z);
 
@@ -1204,10 +1477,13 @@ public class UnitType extends UnlockableContent{
         if(engines.size > 0) drawEngines(unit);
         Draw.z(z);
         if(drawBody) drawBody(unit);
-        if(drawCell) drawCell(unit);
+        if(drawCell && !(unit instanceof Crawlc)) drawCell(unit);
+        Draw.scl(scl); //TODO this is a hack for neoplasm turrets
         drawWeapons(unit);
         if(drawItems) drawItems(unit);
-        drawLight(unit);
+        if(!isPayload){
+            drawLight(unit);
+        }
 
         if(unit.shieldAlpha > 0 && drawShields){
             drawShield(unit);
@@ -1218,9 +1494,9 @@ public class UnitType extends UnlockableContent{
             for(int i = 0; i < parts.size; i++){
                 var part = parts.get(i);
 
-                WeaponMount first = unit.mounts.length > part.weaponIndex ? unit.mounts[part.weaponIndex] : null;
-                if(first != null){
-                    DrawPart.params.set(first.warmup, first.reload / weapons.first().reload, first.smoothReload, first.heat, first.recoil, first.charge, unit.x, unit.y, unit.rotation);
+                WeaponMount mount = unit.mounts.length > part.weaponIndex ? unit.mounts[part.weaponIndex] : null;
+                if(mount != null){
+                    DrawPart.params.set(mount.warmup, mount.reload / mount.weapon.reload, mount.smoothReload, mount.heat, mount.recoil, mount.charge, unit.x, unit.y, unit.rotation);
                 }else{
                     DrawPart.params.set(0f, 0f, 0f, 0f, 0f, 0f, unit.x, unit.y, unit.rotation);
                 }
@@ -1229,6 +1505,7 @@ public class UnitType extends UnlockableContent{
                     DrawPart.params.life = s.fin();
                 }
 
+                applyColor(unit);
                 part.draw(DrawPart.params);
             }
         }
@@ -1247,11 +1524,52 @@ public class UnitType extends UnlockableContent{
         Draw.reset();
     }
 
+    //...where do I put this
+    public Color shieldColor(Unit unit){
+        return shieldColor == null ? unit.team.color : shieldColor;
+    }
+
+    public void drawMining(Unit unit){
+        if(drawMineBeam){
+            float focusLen = mineBeamOffset + Mathf.absin(Time.time, 1.1f, 0.5f);
+            float px = unit.x + Angles.trnsx(unit.rotation, focusLen);
+            float py = unit.y + Angles.trnsy(unit.rotation, focusLen);
+
+            drawMiningBeam(unit, px, py);
+        }
+    }
+
+    public void drawMiningBeam(Unit unit, float px, float py){
+        if(!unit.mining()) return;
+        float swingScl = 12f, swingMag = tilesize / 8f;
+        float flashScl = 0.3f;
+
+        float ex = unit.mineTile.worldx() + Mathf.sin(Time.time + 48, swingScl, swingMag);
+        float ey = unit.mineTile.worldy() + Mathf.sin(Time.time + 48, swingScl + 2f, swingMag);
+
+        Draw.z(Layer.flyingUnit + 0.1f);
+
+        Draw.color(Color.lightGray, Color.white, 1f - flashScl + Mathf.absin(Time.time, 0.5f, flashScl));
+
+        Draw.alpha(Renderer.unitLaserOpacity);
+        Drawf.laser(mineLaserRegion, mineLaserEndRegion, px, py, ex, ey, 0.75f);
+
+        if(unit.isLocal()){
+            Lines.stroke(1f, Pal.accent);
+            Lines.poly(unit.mineTile.worldx(), unit.mineTile.worldy(), 4, tilesize / 2f * Mathf.sqrt2, Time.time);
+        }
+
+        Draw.color();
+    }
+
     public <T extends Unit & Payloadc> void drawPayload(T unit){
         if(unit.hasPayload()){
+            float prev = Draw.z();
+            Draw.z(prev - 0.02f);
             Payload pay = unit.payloads().first();
             pay.set(unit.x, unit.y, unit.rotation);
             pay.draw();
+            Draw.z(prev);
         }
     }
 
@@ -1260,17 +1578,8 @@ public class UnitType extends UnlockableContent{
         float radius = unit.hitSize() * 1.3f;
         Fill.light(unit.x, unit.y, Lines.circleVertices(radius), radius,
             Color.clear,
-            Tmp.c2.set(unit.team.color).lerp(Color.white, Mathf.clamp(unit.hitTime() / 2f)).a(0.7f * alpha)
+            Tmp.c2.set(unit.type.shieldColor(unit)).lerp(Color.white, Mathf.clamp(unit.hitTime() / 2f)).a(0.7f * alpha)
         );
-    }
-
-    public void drawControl(Unit unit){
-        Draw.z(unit.isFlying() ? Layer.flyingUnitLow : Layer.groundUnit - 2);
-
-        Draw.color(Pal.accent, Color.white, Mathf.absin(4f, 0.3f));
-        Lines.poly(unit.x, unit.y, 4, unit.hitSize + 1.5f);
-
-        Draw.reset();
     }
 
     public void drawShadow(Unit unit){
@@ -1298,7 +1607,7 @@ public class UnitType extends UnlockableContent{
     public void drawSoftShadow(float x, float y, float rotation, float alpha){
         Draw.color(0, 0, 0, 0.4f * alpha);
         float rad = 1.6f;
-        float size = Math.max(region.width, region.height) * region.scl();
+        float size = Math.max(region.width, region.height) * region.scl() * softShadowScl;
         Draw.rect(softShadowRegion, x, y, size * rad * Draw.xscl, size * rad * Draw.yscl, rotation - 90);
         Draw.color();
     }
@@ -1308,23 +1617,24 @@ public class UnitType extends UnlockableContent{
 
         //draw back items
         if(unit.item() != null && unit.itemTime > 0.01f){
-            float size = (itemSize + Mathf.absin(Time.time, 5f, 1f)) * unit.itemTime;
+            float sin = Mathf.absin(Time.time, 5f, 1f);
+            float size = (itemSize + sin) * unit.itemTime;
 
-            Draw.mixcol(Pal.accent, Mathf.absin(Time.time, 5f, 0.1f));
+            Draw.mixcol(Pal.accent, sin * 0.1f);
             Draw.rect(unit.item().fullIcon,
             unit.x + Angles.trnsx(unit.rotation + 180f, itemOffsetY),
             unit.y + Angles.trnsy(unit.rotation + 180f, itemOffsetY),
             size, size, unit.rotation);
             Draw.mixcol();
 
-            size = ((3f + Mathf.absin(Time.time, 5f, 1f)) * unit.itemTime + 0.5f) * 2;
+            size = ((3f + sin) * unit.itemTime + 0.5f) * 2;
             Draw.color(Pal.accent);
             Draw.rect(itemCircleRegion,
             unit.x + Angles.trnsx(unit.rotation + 180f, itemOffsetY),
             unit.y + Angles.trnsy(unit.rotation + 180f, itemOffsetY),
             size, size);
 
-            if(unit.isLocal() && !renderer.pixelator.enabled()){
+            if(unit.isLocal() && !renderer.pixelate){
                 Fonts.outline.draw(unit.stack.amount + "",
                 unit.x + Angles.trnsx(unit.rotation + 180f, itemOffsetY),
                 unit.y + Angles.trnsy(unit.rotation + 180f, itemOffsetY) - 3,
@@ -1397,6 +1707,11 @@ public class UnitType extends UnlockableContent{
     public void drawBody(Unit unit){
         applyColor(unit);
 
+        if(unit instanceof UnderwaterMovec){
+            Draw.alpha(1f);
+            Draw.mixcol(unit.floorOn().mapColor.write(Tmp.c1).mul(0.9f), 1f);
+        }
+
         Draw.rect(region, unit.x, unit.y, unit.rotation - 90);
 
         Draw.reset();
@@ -1422,6 +1737,7 @@ public class UnitType extends UnlockableContent{
     }
 
     public <T extends Unit & Tankc> void drawTank(T unit){
+        applyColor(unit);
         Draw.rect(treadRegion, unit.x, unit.y, unit.rotation - 90);
 
         if(treadRegion.found()){
@@ -1481,11 +1797,19 @@ public class UnitType extends UnlockableContent{
                 Draw.rect(footRegion, leg.base.x, leg.base.y, position.angleTo(leg.base));
             }
 
-            Lines.stroke(legRegion.height * legRegion.scl() * flips);
-            Lines.line(legRegion, position.x, position.y, leg.joint.x, leg.joint.y, false);
+            if(legBaseUnder){
+                Lines.stroke(legBaseRegion.height * legRegion.scl() * flips);
+                Lines.line(legBaseRegion, leg.joint.x + Tmp.v1.x, leg.joint.y + Tmp.v1.y, leg.base.x, leg.base.y, false);
 
-            Lines.stroke(legBaseRegion.height * legRegion.scl() * flips);
-            Lines.line(legBaseRegion, leg.joint.x + Tmp.v1.x, leg.joint.y + Tmp.v1.y, leg.base.x, leg.base.y, false);
+                Lines.stroke(legRegion.height * legRegion.scl() * flips);
+                Lines.line(legRegion, position.x, position.y, leg.joint.x, leg.joint.y, false);
+            }else{
+                Lines.stroke(legRegion.height * legRegion.scl() * flips);
+                Lines.line(legRegion, position.x, position.y, leg.joint.x, leg.joint.y, false);
+
+                Lines.stroke(legBaseRegion.height * legRegion.scl() * flips);
+                Lines.line(legBaseRegion, leg.joint.x + Tmp.v1.x, leg.joint.y + Tmp.v1.y, leg.base.x, leg.base.y, false);
+            }
 
             if(jointRegion.found()){
                 Draw.rect(jointRegion, leg.joint.x, leg.joint.y);
@@ -1508,30 +1832,39 @@ public class UnitType extends UnlockableContent{
         Draw.reset();
     }
 
-    //TODO
     public void drawCrawl(Crawlc crawl){
         Unit unit = (Unit)crawl;
         applyColor(unit);
 
-        //change to 2 TODO
+        float crawlTime =
+            crawl instanceof Segmentc seg && seg.headSegment() instanceof Crawlc head ? head.crawlTime() + seg.segmentIndex() * segmentPhase * segments :
+            crawl.crawlTime();
+
         for(int p = 0; p < 2; p++){
             TextureRegion[] regions = p == 0 ? segmentOutlineRegions : segmentRegions;
 
             for(int i = 0; i < segments; i++){
-                float trns = Mathf.sin(crawl.crawlTime() + i * segmentPhase, segmentScl, segmentMag);
+                float trns = Mathf.sin(crawlTime + i * segmentPhase, segmentScl, segmentMag);
 
                 //at segment 0, rotation = segmentRot, but at the last segment it is rotation
                 float rot = Mathf.slerp(crawl.segmentRot(), unit.rotation, i / (float)(segments - 1));
                 float tx = Angles.trnsx(rot, trns), ty = Angles.trnsy(rot, trns);
 
                 //shadow
-                Draw.color(0f, 0f, 0f, 0.2f);
+                //Draw.color(0f, 0f, 0f, 0.2f);
                 //Draw.rect(regions[i], unit.x + tx + 2f, unit.y + ty - 2f, rot - 90);
 
-                applyColor(unit);
+                //applyColor(unit);
 
                 //TODO merge outlines?
                 Draw.rect(regions[i], unit.x + tx, unit.y + ty, rot - 90);
+
+                // Draws the cells
+                if(drawCell && p != 0 && segmentCellRegions[i].found()){
+                    Draw.color(cellColor(unit));
+                    Draw.rect(segmentCellRegions[i], unit.x + tx, unit.y + ty, rot - 90);
+                    Draw.reset();
+                }
             }
         }
     }
@@ -1593,6 +1926,10 @@ public class UnitType extends UnlockableContent{
         if(unit.drownTime > 0 && unit.lastDrownFloor != null){
             Draw.mixcol(Tmp.c1.set(unit.lastDrownFloor.mapColor).mul(0.83f), unit.drownTime * 0.9f);
         }
+        //this is horribly scuffed.
+        if(renderer != null && renderer.overlays != null){
+            renderer.overlays.checkApplySelection(unit);
+        }
     }
 
     //endregion
@@ -1621,29 +1958,30 @@ public class UnitType extends UnlockableContent{
 
             Tmp.v1.set(x, y).rotate(rot);
             float ex = Tmp.v1.x, ey = Tmp.v1.y;
+            float rad = (radius + Mathf.absin(Time.time, 2f, radius / 4f)) * scale;
 
             //engine outlines (cursed?)
             /*float z = Draw.z();
             Draw.z(z - 0.0001f);
             Draw.color(type.outlineColor);
             Fill.circle(
-            unit.x + ex,
-            unit.y + ey,
-            (type.outlineRadius * Draw.scl + radius + Mathf.absin(Time.time, 2f, radius / 4f)) * scale
+                unit.x + ex,
+                unit.y + ey,
+                (type.outlineRadius * Draw.scl + radius + Mathf.absin(Time.time, 2f, radius / 4f)) * scale
             );
             Draw.z(z);*/
 
             Draw.color(color);
             Fill.circle(
-            unit.x + ex,
-            unit.y + ey,
-            (radius + Mathf.absin(Time.time, 2f, radius / 4f)) * scale
+                unit.x + ex,
+                unit.y + ey,
+                rad
             );
             Draw.color(type.engineColorInner);
             Fill.circle(
-            unit.x + ex - Angles.trnsx(rot + rotation, 1f),
-            unit.y + ey - Angles.trnsy(rot + rotation, 1f),
-            (radius + Mathf.absin(Time.time, 2f, radius / 4f)) / 2f  * scale
+                unit.x + ex - Angles.trnsx(rot + rotation, rad / 4f),
+                unit.y + ey - Angles.trnsy(rot + rotation, rad / 4f),
+                rad / 2f
             );
         }
 

@@ -3,9 +3,11 @@ package mindustry.world.meta;
 import arc.struct.ObjectMap.*;
 import arc.struct.*;
 import arc.util.*;
+import mindustry.mod.*;
 import mindustry.type.*;
 
 /** Hold and organizes a list of block stats. */
+@NoPatch
 public class Stats{
     /** Whether to display stats with categories. If false, categories are completely ignored during display. */
     public boolean useCategories = false;
@@ -30,6 +32,16 @@ public class Stats{
     /** Adds an integer percent stat value. Value is assumed to be in the 0-1 range. */
     public void addPercent(Stat stat, float value){
         add(stat, StatValues.number((int)(value * 100), StatUnit.percent));
+    }
+
+    /** Adds a multiplicative modifier stat value. Value is assumed to be in the 0-1 range. */
+    public void addMultModifier(Stat stat, float value){
+        add(stat, StatValues.multiplierModifier(value));
+    }
+
+    /** Adds an percent modifier stat value. Value is assumed to be in the 0-1 range. */
+    public void addPercentModifier(Stat stat, float value){
+        add(stat, StatValues.percentModifier(value));
     }
 
     /** Adds a single y/n boolean value. */
@@ -71,6 +83,12 @@ public class Stats{
     /** Adds a single string value with this stat. */
     public void add(Stat stat, String format, Object... args){
         add(stat, StatValues.string(format, args));
+    }
+
+    /** Replaces a stat, removing the old value if it exists. */
+    public void replace(Stat stat, StatValue value){
+        remove(stat);
+        add(stat, value);
     }
 
     /** Adds a stat value. */

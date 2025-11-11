@@ -1,6 +1,7 @@
 package mindustry.game;
 
 import arc.math.geom.*;
+import arc.struct.*;
 import arc.util.*;
 import mindustry.core.GameState.*;
 import mindustry.ctype.*;
@@ -9,6 +10,7 @@ import mindustry.net.*;
 import mindustry.net.Packets.*;
 import mindustry.type.*;
 import mindustry.world.*;
+import mindustry.world.blocks.environment.*;
 import mindustry.world.blocks.storage.CoreBlock.*;
 
 public class EventType{
@@ -16,6 +18,7 @@ public class EventType{
     //events that occur very often
     public enum Trigger{
         shock,
+        cannotUpgrade,
         openConsole,
         blastFreeze,
         impactPower,
@@ -38,7 +41,10 @@ public class EventType{
         teamCoreDamage,
         socketConfigChanged,
         update,
+        beforeGameUpdate,
+        afterGameUpdate,
         unitCommandChange,
+        unitCommandPosition,
         unitCommandAttack,
         importMod,
         draw,
@@ -79,6 +85,10 @@ public class EventType{
     public static class BlockInfoEvent{}
     /** Called *after* all content has been initialized. */
     public static class ContentInitEvent{}
+    /** Called *after* all content has been added to the atlas, but before its pixmaps are disposed. */
+    public static class AtlasPackEvent{}
+    /** Called *after* all mod content has been loaded, but before it has been initialized. */
+    public static class ModContentLoadEvent{}
     /** Called when the client game is first loaded. */
     public static class ClientLoadEvent{}
     /** Called after SoundControl registers its music. */
@@ -92,6 +102,15 @@ public class EventType{
     public static class WorldLoadBeginEvent{}
     /** Called when a game begins and the world tiles are initiated. About to updates tile proximity and sets up physics for the world(Before WorldLoadEvent) */
     public static class WorldLoadEndEvent{}
+
+    /** Called when a save loads custom patches. {@link #patches} can be modified in the event handler. */
+    public static class ContentPatchLoadEvent{
+        public final Seq<String> patches;
+
+        public ContentPatchLoadEvent(Seq<String> patches){
+            this.patches = patches;
+        }
+    }
 
     public static class SaveLoadEvent{
         public final boolean isMap;
@@ -386,6 +405,38 @@ public class EventType{
 
         public TileChangeEvent set(Tile tile){
             this.tile = tile;
+            return this;
+        }
+    }
+
+    /**
+     * Called when a tile changes its floor. Do not cache or use with a timer.
+     * Do not modify any tiles inside listener code.
+     * */
+    public static class TileFloorChangeEvent{
+        public Tile tile;
+        public Floor previous, floor;
+
+        public TileFloorChangeEvent set(Tile tile, Floor previous, Floor floor){
+            this.tile = tile;
+            this.previous = previous;
+            this.floor = floor;
+            return this;
+        }
+    }
+
+    /**
+     * Called when a tile changes its overlay. Do not cache or use with a timer.
+     * Do not modify any tiles inside listener code.
+     * */
+    public static class TileOverlayChangeEvent{
+        public Tile tile;
+        public Floor previous, overlay;
+
+        public TileOverlayChangeEvent set(Tile tile, Floor previous, Floor overlay){
+            this.tile = tile;
+            this.previous = previous;
+            this.overlay = overlay;
             return this;
         }
     }
